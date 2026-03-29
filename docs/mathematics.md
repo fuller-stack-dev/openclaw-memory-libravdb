@@ -308,7 +308,12 @@ This makes compaction load-bearing in retrieval rather than archival only.
 The full quality loop is:
 
 $$
-\text{high-value turns} \rightarrow \text{better clusters} \rightarrow \text{higher summary confidence} \rightarrow \text{lower decay\_rate} \rightarrow \text{higher retrieval score}
+\text{high-value turns}
+\rightarrow \text{better clusters}
+\rightarrow \text{higher summary confidence}
+\rightarrow \text{lower decay rate}
+\rightarrow \text{higher retrieval score}
 $$
 
-That is the system-level reason the math is distributed across ingestion, compaction, and retrieval instead of existing only in one scoring function.
+That is the system-level reason the math is distributed across ingestion,
+compaction, and retrieval instead of existing only in one scoring function.

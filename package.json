@@ -1,8 +1,21 @@
 {
   "name": "@xdarkicex/openclaw-memory-libravdb",
   "version": "1.3.0",
-  "private": true,
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "README.md",
+    "openclaw.plugin.json",
+    "package.json",
+    "src/",
+    "scripts/",
+    "sidecar/",
+    "docs/",
+    "tsconfig.json",
+    "tsconfig.tests.json"
+  ],
   "engines": {
     "node": ">=22"
   },

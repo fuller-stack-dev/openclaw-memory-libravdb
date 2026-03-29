@@ -98,6 +98,21 @@ The current implementation uses different constants by scope:
 - durable user memory: $\lambda = 0.00001$
 - global memory: $\lambda = 0.000002$
 
+The implied half-lives make the decay constants auditable at a glance:
+
+| Scope | $\lambda$ | Half-life |
+|---|---|---|
+| Session | $0.0001$ | $\approx 1.9\ \text{hours}$ |
+| User | $0.00001$ | $\approx 19\ \text{hours}$ |
+| Global | $0.000002$ | $\approx 4\ \text{days}$ |
+
+$$
+t_{1/2} = \frac{\ln 2}{\lambda}
+$$
+
+If those half-lives feel wrong for a given deployment, adjust $\lambda$ via
+config — do not change the decay formula itself.
+
 This makes session context fade fastest, user memory fade more slowly, and
 global memory remain the most stable.
 

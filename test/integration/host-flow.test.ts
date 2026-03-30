@@ -8,6 +8,7 @@ import type { PluginConfig, SearchResult } from "../../src/types.js";
 
 class FakeRpc {
   public inserted: Array<{ collection: string; text: string; metadata?: Record<string, unknown> }> = [];
+  public calls = new Map<string, number>();
   public gatingResult = {
     g: 0.9,
     t: 0.8,
@@ -24,6 +25,7 @@ class FakeRpc {
   };
 
   async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    this.calls.set(method, (this.calls.get(method) ?? 0) + 1);
     switch (method) {
       case "health":
         return { ok: true } as T;
@@ -76,7 +78,7 @@ test("context-engine bootstrap -> ingest -> assemble -> compact host flow", asyn
   };
 
   const getRpc = async () => rpc as never;
-  const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
+  const memorySection = buildMemoryPromptSection();
   const context = buildContextEngineFactory(getRpc, cfg, recallCache);
 
   await assert.doesNotReject(() => context.bootstrap({ sessionId: "s1", userId: "u1" }));
@@ -86,12 +88,12 @@ test("context-engine bootstrap -> ingest -> assemble -> compact host flow", asyn
     message: { role: "user", content: "remember this" },
   });
 
-  const prompt = await memorySection({
-    userId: "u1",
-    messages: [{ role: "user", content: "what do you know?" }],
+  const prompt = memorySection({
+    availableTools: new Set(["memory_search"]),
+    citationsMode: "inline",
   });
-  assert.match(prompt.content, /<recalled_memories>/);
-  assert.match(prompt.content, /user recall|global recall/);
+  assert.ok(Array.isArray(prompt));
+  assert.match(prompt.join("\n"), /LibraVDB persistent memory is active/);
 
   const assembled = await context.assemble({
     sessionId: "s1",
@@ -139,7 +141,7 @@ test("ingest skips durable user insert when gating score is below threshold", as
   assert.ok(!rpc.inserted.some((item) => item.collection === "user:u1"));
 });
 
-test("prompt section populates recall cache that assemble can consume", async () => {
+test("assemble caches user and global hits under the new memory prompt contract", async () => {
   const rpc = new FakeRpc();
   const recallCache = createRecallCache<SearchResult>();
   const cfg: PluginConfig = {
@@ -152,23 +154,28 @@ test("prompt section populates recall cache that assemble can consume", async ()
   };
 
   const getRpc = async () => rpc as never;
-  const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
   const context = buildContextEngineFactory(getRpc, cfg, recallCache);
 
-  await memorySection({
-    userId: "u1",
-    messages: [{ role: "user", content: "cached query" }],
-  });
-
-  const assembled = await context.assemble({
+  const first = await context.assemble({
     sessionId: "s1",
     userId: "u1",
     messages: [{ role: "user", content: "cached query" }],
     tokenBudget: 100,
   });
+  const searchCallsAfterFirst = rpc.calls.get("search_text") ?? 0;
 
-  assert.match(assembled.systemPromptAddition, /recalled_memories/);
-  assert.ok(assembled.messages.length >= 1);
+  const second = await context.assemble({
+    sessionId: "s1",
+    userId: "u1",
+    messages: [{ role: "user", content: "cached query" }],
+    tokenBudget: 100,
+  });
+  const searchCallsAfterSecond = rpc.calls.get("search_text") ?? 0;
+
+  assert.match(first.systemPromptAddition, /recalled_memories/);
+  assert.match(second.systemPromptAddition, /recalled_memories/);
+  assert.equal(searchCallsAfterFirst, 3);
+  assert.equal(searchCallsAfterSecond, 4);
 });
 
 test("two concurrent sessions do not leak session recall across boundaries", async () => {
@@ -184,13 +191,7 @@ test("two concurrent sessions do not leak session recall across boundaries", asy
   };
 
   const getRpc = async () => rpc as never;
-  const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
   const context = buildContextEngineFactory(getRpc, cfg, recallCache);
-
-  await memorySection({
-    userId: "u1",
-    messages: [{ role: "user", content: "shared query" }],
-  });
 
   const assembledS1 = await context.assemble({
     sessionId: "s1",
@@ -212,4 +213,45 @@ test("two concurrent sessions do not leak session recall across boundaries", asy
   assert.doesNotMatch(textS1, /session recall for session:s2/);
   assert.match(textS2, /session recall for session:s2/);
   assert.doesNotMatch(textS2, /session recall for session:s1/);
+});
+
+test("user ingest invalidates cached durable recall for that user", async () => {
+  const rpc = new FakeRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    alpha: 0.7,
+    beta: 0.2,
+    gamma: 0.1,
+    tokenBudgetFraction: 0.25,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+
+  await context.assemble({
+    sessionId: "s1",
+    userId: "u1",
+    messages: [{ role: "user", content: "same query" }],
+    tokenBudget: 100,
+  });
+  const searchCallsAfterFirst = rpc.calls.get("search_text") ?? 0;
+
+  await context.ingest({
+    sessionId: "s1",
+    userId: "u1",
+    message: { role: "user", content: "new durable fact" },
+  });
+
+  await context.assemble({
+    sessionId: "s1",
+    userId: "u1",
+    messages: [{ role: "user", content: "same query" }],
+    tokenBudget: 100,
+  });
+  const searchCallsAfterSecond = rpc.calls.get("search_text") ?? 0;
+
+  assert.equal(searchCallsAfterFirst, 3);
+  assert.equal(searchCallsAfterSecond, 6);
 });

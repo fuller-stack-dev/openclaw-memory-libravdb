@@ -7,6 +7,9 @@ export function createRecallCache<T = unknown>(): RecallCache<T> {
     put(entry) {
       entries.set(cacheKey(entry.userId, entry.queryText), entry);
     },
+    get(key) {
+      return entries.get(cacheKey(key.userId, key.queryText));
+    },
     take(key) {
       const id = cacheKey(key.userId, key.queryText);
       const hit = entries.get(id);
@@ -14,6 +17,14 @@ export function createRecallCache<T = unknown>(): RecallCache<T> {
         entries.delete(id);
       }
       return hit;
+    },
+    clearUser(userId) {
+      const prefix = `${userId}\n`;
+      for (const key of entries.keys()) {
+        if (key.startsWith(prefix)) {
+          entries.delete(key);
+        }
+      }
     },
   };
 }

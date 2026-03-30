@@ -115,7 +115,9 @@ export interface RecallCacheEntry<T = unknown> {
 
 export interface RecallCache<T = unknown> {
   put(entry: RecallCacheEntry<T>): void;
+  get(key: Pick<RecallCacheEntry<T>, "userId" | "queryText">): RecallCacheEntry<T> | undefined;
   take(key: Pick<RecallCacheEntry<T>, "userId" | "queryText">): RecallCacheEntry<T> | undefined;
+  clearUser(userId: string): void;
 }
 
 export interface ContextBootstrapArgs {

@@ -43,6 +43,7 @@ export function buildContextEngineFactory(
 
       if (message.role === "user") {
         try {
+          recallCache.clearUser(userId);
           await rpc.call("insert_text", {
             collection: `turns:${userId}`,
             id: `${userId}:${ts}`,
@@ -96,7 +97,7 @@ export function buildContextEngineFactory(
       }
 
       const excluded = recentIds(messages, 4);
-      const cached = recallCache.take({ userId, queryText });
+      const cached = recallCache.get({ userId, queryText });
 
       try {
         const rpc = await getRpc();
@@ -122,6 +123,15 @@ export function buildContextEngineFactory(
                 k: Math.ceil((cfg.topK ?? 8) / 4),
               }),
         ]);
+
+        if (!cached) {
+          recallCache.put({
+            userId,
+            queryText,
+            userHits: userHits.results,
+            globalHits: globalHits.results,
+          });
+        }
 
         const ranked = scoreCandidates(
           [

@@ -332,3 +332,364 @@ $$
 
 That is the system-level reason the math is distributed across ingestion,
 compaction, and retrieval instead of existing only in one scoring function.
+
+## 7. Planned Two-Pass Discovery Scoring
+
+This section documents the planned scoring and assembly model for a future
+two-pass retrieval system. It is a design target for optimization work after
+the OpenClaw `2026.3.28+` memory prompt contract change. It is **not** the
+current implementation in [`src/scoring.ts`](../src/scoring.ts) or
+[`src/context-engine.ts`](../src/context-engine.ts).
+
+The design goal is to separate:
+
+1. invariant documents that must always be present
+2. cheap discovery over variant documents
+3. selective second-pass expansion under a hard prompt budget
+
+### 7.1 Foundational Definitions
+
+Let the retrievable document corpus be:
+
+$$
+\mathbf{D}=\{d_1, d_2, \ldots, d_n\}
+$$
+
+and let the query space be:
+
+$$
+\mathbf{Q}
+$$
+
+Let the embedding function:
+
+$$
+\varphi : \mathbf{D}\cup\mathbf{Q}\rightarrow \mathbb{R}^m
+$$
+
+map documents and queries to unit vectors:
+
+$$
+\|\varphi(x)\| = 1 \qquad \forall x \in \mathbf{D}\cup\mathbf{Q}
+$$
+
+The planned gating function is:
+
+$$
+G : \mathbf{Q}\times\mathbf{D}\rightarrow \{0,1\}
+$$
+
+and determines whether a document is injected for a query.
+
+### 7.2 Corpus Decomposition
+
+The corpus is partitioned into invariant and variant sets:
+
+$$
+\mathbf{D} = \mathcal{I}\cup\mathcal{V},
+\qquad
+\mathcal{I}\cap\mathcal{V}=\emptyset
+$$
+
+The invariant membership predicate is:
+
+$$
+\iota : \mathbf{D}\rightarrow \{0,1\}
+$$
+
+with:
+
+$$
+\mathcal{I} = \{d\in\mathbf{D}\mid \iota(d)=1\}
+$$
+
+and:
+
+$$
+\mathcal{V} = \mathbf{D}\setminus\mathcal{I}
+$$
+
+For OpenClaw, the intended implementation is that invariant documents are
+registered as authored constants at load time rather than discovered at query
+time. In practice, this means documents such as `AGENTS.md` and `souls.md`
+should be compiled into the invariant set when they are explicitly marked as
+always-inject rules.
+
+The required invariant is:
+
+$$
+\iota(d)=1 \Rightarrow G(q,d)=1 \qquad \forall q\in\mathbf{Q}
+$$
+
+This is a compile-time guarantee, not a runtime heuristic.
+
+### 7.3 Document Authority Weight
+
+Each variant document carries a precomputed authority weight:
+
+$$
+\omega(d)=\alpha_r\cdot r(d)+\alpha_f\cdot f(d)+\alpha_a\cdot a(d)
+$$
+
+with:
+
+$$
+\alpha_r+\alpha_f+\alpha_a=1
+$$
+
+where:
+
+$$
+r(d)=\exp\left(-\lambda_r\cdot \Delta t(d)\right)
+$$
+
+$$
+f(d)=\frac{\log(1+\operatorname{acc}(d))}{\log\left(1+\max_{d'\in\mathcal{V}}\operatorname{acc}(d')\right)}
+$$
+
+$$
+a(d)\in[0,1]
+$$
+
+This lets the planned discovery score incorporate recency, access frequency,
+and authored authority without baking those concerns into the raw cosine term.
+
+### 7.4 Pass 1: Coarse Semantic Filtering
+
+Pass 1 computes cosine similarity:
+
+$$
+\operatorname{sim}(q,d)=\varphi(q)^\top \varphi(d)
+$$
+
+and selects the coarse candidate set:
+
+$$
+\mathcal{C}_1(q)=\operatorname{top\text{-}k_1}_{d\in\mathcal{V}}\ \operatorname{sim}(q,d)
+$$
+
+with a hard similarity floor:
+
+$$
+\mathcal{C}_1(q)=\{d\in\mathcal{C}_1(q)\mid \operatorname{sim}(q,d)\ge \theta_1\}
+$$
+
+The purpose of this pass is breadth with cheap semantic recall. Documents below
+$\theta_1$ are rejected even if they land in the top-$k_1$ set, because the
+first pass must not admit semantically orthogonal noise into second-pass work.
+
+### 7.5 Pass 2: Normalized Hybrid Scoring
+
+Let the query keyword extractor return:
+
+$$
+K = \operatorname{KeyExt}(q)
+$$
+
+and define normalized keyword coverage:
+
+$$
+M_{norm}(K,d)=\frac{|K\cap \operatorname{terms}(d)|}{|K|}\in[0,1]
+$$
+
+The proposed normalized second-pass score is:
+
+$$
+S_{final}(d)=
+\frac{
+\omega(d)\cdot\max(\operatorname{sim}(q,d), 0)\cdot\left(1+\kappa\cdot M_{norm}(K,d)\right)
+}{
+1+\kappa
+}
+$$
+
+The normalized second-pass score form above was suggested during design review
+by GitHub contributor [@JuanHuaXu](https://github.com/JuanHuaXu). The broader
+two-pass architecture in this section remains project-authored.
+
+This form is preferred over a hard clamp such as $\min(\mathrm{term},1)$
+because clamping discards ranking information at the high end of the score
+distribution. The denominator $(1+\kappa)$ gives an analytic bound instead of
+truncating the result.
+
+The second-pass candidate set is:
+
+$$
+\mathcal{C}_2(q)=\operatorname{top\text{-}k_2}_{d\in\mathcal{C}_1(q)}\ S_{final}(d)
+$$
+
+with:
+
+$$
+k_2 \le k_1
+$$
+
+### 7.6 Bounded Range and Interpretation of $\kappa$
+
+Let:
+
+$$
+s=\max(\operatorname{sim}(q,d),0)\in[0,1]
+$$
+
+Then:
+
+$$
+S_{final}(d)=\frac{\omega(d)\cdot s\cdot(1+\kappa M_{norm}(K,d))}{1+\kappa}
+$$
+
+The numerator is maximized when $s=1$ and $M_{norm}(K,d)=1$:
+
+$$
+\max(\text{numerator})=\omega(d)\cdot(1+\kappa)
+$$
+
+Therefore:
+
+$$
+0 \le S_{final}(d)\le \omega(d)\le 1
+$$
+
+This yields a clean interpretation of $\kappa$:
+
+- $\kappa = 0$ gives pure semantic retrieval
+- $\kappa = 0.5$ allows keyword coverage to provide up to a one-third relative
+  boost before normalization
+- $\kappa = 1.0$ makes full lexical support restore the pure semantic ceiling
+  while penalizing semantic-only matches with no keyword support
+
+A reasonable initial experiment value is:
+
+$$
+\kappa = 0.3
+$$
+
+### 7.7 Multi-Hop Expansion
+
+Let the authored hop graph be:
+
+$$
+\mathcal{G}=(\mathbf{D}, E)
+$$
+
+where edges are registered in document metadata at authorship time.
+
+For a document $d$, define its hop neighborhood:
+
+$$
+H(d)=\{d'\in\mathbf{D}\mid (d,d')\in E\}
+$$
+
+The hop expansion set is:
+
+$$
+\mathcal{C}_{hop}(q)=\bigcup_{d\in\mathcal{C}_2(q)} H(d)\setminus\mathcal{C}_2(q)
+$$
+
+Each hop candidate inherits a decayed score from its best parent:
+
+$$
+S_{hop}(d')=
+\lambda\cdot
+\max_{d\in\mathcal{C}_2(q),\ d'\in H(d)} S_{final}(d)
+$$
+
+with hop decay:
+
+$$
+\lambda\in(0,1)
+$$
+
+and filtered hop set:
+
+$$
+\mathcal{C}_{hop}^{*}(q)=\{d'\in\mathcal{C}_{hop}(q)\mid S_{hop}(d')\ge\theta_{hop}\}
+$$
+
+### 7.8 Final Assembly Under a Token Budget
+
+Variant projection is:
+
+$$
+\operatorname{Proj}(\mathcal{V}, q)=\mathcal{C}_2(q)\cup\mathcal{C}_{hop}^{*}(q)
+$$
+
+Total injected soul context is:
+
+$$
+C_{soul}(q)=\mathcal{I}\cup \operatorname{Proj}(\mathcal{V}, q)
+$$
+
+Let the total prompt budget be $\tau$. If the invariant set consumes:
+
+$$
+\tau_{\mathcal{I}}=\sum_{d\in\mathcal{I}} \operatorname{toks}(d)
+$$
+
+then the variant budget is:
+
+$$
+\tau_{\mathcal{V}}=\tau-\tau_{\mathcal{I}}
+$$
+
+Documents in $\operatorname{Proj}(\mathcal{V}, q)$ are injected in descending
+score order until:
+
+$$
+\sum_{d\in \text{injected}} \operatorname{toks}(d)\le\tau_{\mathcal{V}}
+$$
+
+The merged score sequence is:
+
+$$
+\sigma(d)=
+\begin{cases}
+S_{final}(d) & d\in\mathcal{C}_2(q) \\
+S_{hop}(d) & d\in\mathcal{C}_{hop}^{*}(q)
+\end{cases}
+$$
+
+### 7.9 Complete Gating Definition
+
+$$
+G(q,d)=
+\begin{cases}
+1 & \text{if } \iota(d)=1 \\
+\mathbf{1}[d\in\mathcal{C}_2(q)\cup\mathcal{C}_{hop}^{*}(q)] & \text{if } \iota(d)=0
+\end{cases}
+$$
+
+### 7.10 Required Runtime Invariants
+
+The implementation must preserve these properties:
+
+1. Invariant completeness:
+
+$$
+\forall d\in\mathcal{I},\ \forall q\in\mathbf{Q}: d\in C_{soul}(q)
+$$
+
+2. Partition integrity:
+
+$$
+\mathcal{I}\cap\mathcal{V}=\emptyset
+$$
+
+3. Score boundedness:
+
+$$
+S_{final}(d)\in[0,1]
+$$
+
+4. Token budget respect:
+
+$$
+\sum_{d\in C_{soul}(q)} \operatorname{toks}(d)\le\tau
+$$
+
+with the invariant set never truncated
+
+5. Hop termination:
+
+The authored hop graph should be acyclic, or the runtime must cap hop depth at
+one to guarantee termination.

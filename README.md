@@ -2,6 +2,19 @@
 
 ## Install
 
+Recommended on macOS:
+
+```bash
+brew tap xDarkicex/openclaw-libravdb-memory
+brew install libravdbd
+brew services start libravdbd
+openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+```
+
+Then activate the plugin in `~/.openclaw/openclaw.json`.
+
+Manual plugin install:
+
 ```bash
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
@@ -33,6 +46,11 @@ Phase 2 packaging assets now live under [`packaging/`](./packaging):
 - `packaging/systemd/libravdbd.service` for Linux user services
 - `packaging/launchd/com.xdarkicex.libravdbd.plist` for macOS LaunchAgents
 - `packaging/homebrew/libravdbd.rb.tmpl` as the source template for a generated Homebrew formula
+
+Recommended service startup commands:
+
+- macOS: `brew services start libravdbd`
+- Linux: `systemctl --user enable --now libravdbd.service`
 
 ## Activate
 

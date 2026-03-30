@@ -117,6 +117,19 @@ extractive compaction. The only optional runtime network path is:
 
 ## Standard Install
 
+### Fastest Path on macOS
+
+```bash
+brew tap xDarkicex/openclaw-libravdb-memory
+brew install libravdbd
+brew services start libravdbd
+openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+```
+
+This is the preferred install flow for macOS users. It gives you a managed `libravdbd` service and a scanner-clean OpenClaw plugin package.
+
+### Plugin Package
+
 ```bash
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
@@ -155,7 +168,15 @@ openclaw memory status
 
 ### Homebrew / macOS
 
-The release workflow now generates a publish-ready `libravdbd.rb` formula asset from [`packaging/homebrew/libravdbd.rb.tmpl`](../packaging/homebrew/libravdbd.rb.tmpl). It is designed for GitHub release assets named:
+Homebrew users should normally install from the published tap:
+
+```bash
+brew tap xDarkicex/openclaw-libravdb-memory
+brew install libravdbd
+brew services start libravdbd
+```
+
+The release workflow generates a publish-ready `libravdbd.rb` formula asset from [`packaging/homebrew/libravdbd.rb.tmpl`](../packaging/homebrew/libravdbd.rb.tmpl). It is designed for GitHub release assets named:
 
 - `libravdbd-darwin-arm64`
 - `libravdbd-darwin-amd64`
@@ -169,7 +190,7 @@ If your GitHub Actions configuration includes:
 
 then tagged releases also push the generated formula into `Formula/libravdbd.rb` in that tap repository automatically.
 
-Example:
+Example plugin config:
 
 ```json
 {
@@ -300,6 +321,12 @@ openclaw memory status
 ```
 
 If the daemon is down, start it and verify the configured endpoint:
+
+```bash
+brew services start libravdbd
+```
+
+Or, without Homebrew:
 
 ```bash
 libravdbd serve

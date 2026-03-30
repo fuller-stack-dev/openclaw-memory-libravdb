@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Node.js `>= 22`
-- Go `>= 1.22` for sidecar development and release builds
+- Go `>= 1.22` for daemon development and release builds
 - `pnpm`
 - OpenClaw CLI for end-to-end plugin testing
 
@@ -21,7 +21,7 @@ Integration tests:
 npm run test:integration
 ```
 
-Go sidecar tests:
+Go daemon tests:
 
 ```bash
 cd sidecar
@@ -29,13 +29,13 @@ env GOCACHE=/tmp/openclaw-memory-libravdb-gocache go test ./...
 env GOCACHE=/tmp/openclaw-memory-libravdb-gocache go test -race ./...
 ```
 
-## Local Sidecar Build
+## Local Daemon Build
 
 ```bash
-bash scripts/build-sidecar.sh
+bash scripts/build-daemon.sh
 ```
 
-This creates `.sidecar-bin/libravdb-sidecar` and copies locally available bundled assets into `.sidecar-bin/`.
+This creates `.daemon-bin/libravdbd` and copies locally available bundled assets into `.daemon-bin/`.
 
 ## Gating Invariants
 

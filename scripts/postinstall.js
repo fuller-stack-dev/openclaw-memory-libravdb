@@ -6,11 +6,11 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
-import { buildSidecarReleaseAssetURL, detectSidecarReleaseTarget } from "./sidecar-release.js";
+import { buildDaemonReleaseAssetURL, detectDaemonReleaseTarget } from "./daemon-release.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = path.join(root, ".sidecar-bin");
-const binary = process.platform === "win32" ? "libravdb-sidecar.exe" : "libravdb-sidecar";
+const outDir = path.join(root, ".daemon-bin");
+const binary = process.platform === "win32" ? "libravdbd.exe" : "libravdbd";
 const modelsDir = path.join(root, ".models");
 const outModelsDir = path.join(outDir, "models");
 const outRuntimeDir = path.join(outDir, "onnxruntime");
@@ -18,9 +18,9 @@ const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 
 mkdirSync(outDir, { recursive: true });
 
-const installed = await installSidecar(pkg.version);
+const installed = await installDaemon(pkg.version);
 if (!installed) {
-  console.error("[openclaw-memory-libravdb] FATAL: sidecar binary could not be installed.");
+  console.error("[openclaw-memory-libravdb] FATAL: daemon binary could not be installed.");
   console.error("  1. Check your internet connection (prebuilt download failed)");
   console.error(`  2. Confirm release assets exist for v${pkg.version} and ${process.platform}-${process.arch}`);
   process.exit(1);
@@ -45,22 +45,22 @@ if (existsSync(runtimeBundle)) {
   cpSync(runtimeBundle, outRuntimeDir, { recursive: true });
 }
 
-async function installSidecar(version) {
-  const target = detectSidecarReleaseTarget();
+async function installDaemon(version) {
+  const target = detectDaemonReleaseTarget();
   if (!target) {
-    console.error(`[openclaw-memory-libravdb] No published sidecar target exists for ${process.platform}-${process.arch}.`);
+    console.error(`[openclaw-memory-libravdb] No published daemon target exists for ${process.platform}-${process.arch}.`);
     return false;
   }
 
-  const assetUrl = buildSidecarReleaseAssetURL(version, target);
+  const assetUrl = buildDaemonReleaseAssetURL(version, target);
   const checksumUrl = `${assetUrl}.sha256`;
   const downloaded = await tryDownloadPrebuilt(assetUrl, checksumUrl, path.join(outDir, binary));
   if (downloaded) {
-    console.log(`[openclaw-memory-libravdb] Sidecar installed (prebuilt ${target})`);
+    console.log(`[openclaw-memory-libravdb] Daemon installed (prebuilt ${target})`);
     return true;
   }
 
-  console.error(`[openclaw-memory-libravdb] Unable to install published sidecar ${target} for v${version}.`);
+  console.error(`[openclaw-memory-libravdb] Unable to install published daemon ${target} for v${version}.`);
   return false;
 }
 
@@ -74,7 +74,7 @@ async function tryDownloadPrebuilt(assetUrl, checksumUrl, dest) {
     const actual = sha256File(dest);
     if (actual !== checksum) {
       rmSync(dest, { force: true });
-      console.warn(`[openclaw-memory-libravdb] Prebuilt sidecar checksum mismatch for ${assetUrl}.`);
+      console.warn(`[openclaw-memory-libravdb] Prebuilt daemon checksum mismatch for ${assetUrl}.`);
       return false;
     }
     if (process.platform !== "win32") {
@@ -83,7 +83,7 @@ async function tryDownloadPrebuilt(assetUrl, checksumUrl, dest) {
     return true;
   } catch (error) {
     rmSync(dest, { force: true });
-    console.warn(`[openclaw-memory-libravdb] Prebuilt sidecar download failed: ${formatError(error)}`);
+    console.warn(`[openclaw-memory-libravdb] Prebuilt daemon download failed: ${formatError(error)}`);
     return false;
   }
 }

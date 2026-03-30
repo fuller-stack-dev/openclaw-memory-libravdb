@@ -8,13 +8,13 @@ This document is the full installation reference for `@xdarkicex/openclaw-memory
 |---|---|---|---|
 | Node.js | `22.0.0` | Latest LTS | Enforced in [`package.json`](../package.json) `engines.node` |
 | OpenClaw | `2026.3.22` | Current stable | Pinned by [`package.json`](../package.json) `peerDependencies.openclaw`; this is the earliest local tag confirmed to expose `definePluginEntry`, `registerContextEngine`, `registerMemoryPromptSection`, and the plugin API shape this repo uses |
-| Go | `1.22` | Latest stable | Dev/fallback build only; not required when prebuilt release assets exist |
+| Go | `1.22` | Latest stable | Required only for local daemon development, not for normal plugin install |
 | Disk | about `1 GB` free for default Nomic install | `2 GB+` if provisioning optional T5 and leaving room for DB growth | See Resource Requirements below |
 | RAM | about `512 MB` for embed-only runtime | `1 GB+` if optional T5 summarizer is provisioned | Based on local RSS measurements below |
-| OS | macOS, Linux, Windows | Current stable releases | Windows uses TCP loopback instead of Unix sockets |
-| Architecture | `arm64`, `x64` | Match published release assets | Current release matrix builds five sidecar targets |
+| OS | macOS, Linux, Windows | Current stable releases | Unix uses a local socket; Windows uses TCP loopback |
+| Architecture | `arm64`, `x64` | Match published daemon release assets | Current release matrix builds five daemon targets |
 
-The published install path is prebuilt-first. End users should not normally need Go.
+The published plugin install path is scanner-clean and connect-only. End users should not need Go to install the OpenClaw plugin itself.
 
 ## Resource Requirements
 
@@ -25,7 +25,7 @@ build on `2026-03-29` or explicitly labeled as estimates.
 
 Measured locally from this checkout:
 
-- sidecar binary: `7.7M`
+- daemon binary: `7.7M`
 - bundled Nomic model directory: `523M`
 - bundled MiniLM fallback model directory: `87M`
 - optional T5 summarizer directory: `371M`
@@ -55,7 +55,7 @@ as well.
 
 ### Memory
 
-Measured locally on Apple M2, `2026-03-29`, by starting the sidecar and reading
+Measured locally on Apple M2, `2026-03-29`, by starting the daemon and reading
 RSS after startup:
 
 - idle RSS with Nomic embedding path loaded and no optional T5 summarizer:
@@ -121,38 +121,78 @@ extractive compaction. The only optional runtime network path is:
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
-Expected successful install shape on a published release:
+The plugin package installs as normal OpenClaw source without daemon bootstrap hooks.
+
+## Daemon Install
+
+Install and start `libravdbd` separately for the same user account that runs OpenClaw. The daemon owns the local DB engine and listens on a local endpoint.
+
+Default endpoints:
+
+- macOS/Linux: `unix:$HOME/.clawdb/run/libravdb.sock`
+- Windows: `tcp:127.0.0.1:37421`
+
+If you run the daemon on a different endpoint, set `plugins.configs.libravdb-memory.sidecarPath` in `~/.openclaw/openclaw.json`.
+
+### Linux
+
+Recommended layout:
+
+```bash
+mkdir -p ~/.local/bin ~/.config/systemd/user
+curl -L -o ~/.local/bin/libravdbd https://github.com/xDarkicex/openclaw-memory-libravdb/releases/download/vX.Y.Z/libravdbd-linux-amd64
+chmod +x ~/.local/bin/libravdbd
+cp packaging/systemd/libravdbd.service ~/.config/systemd/user/libravdbd.service
+systemctl --user enable --now libravdbd.service
+```
+
+Then verify:
+
+```bash
+systemctl --user status libravdbd.service
+openclaw memory status
+```
+
+### Homebrew / macOS
+
+The release workflow now generates a publish-ready `libravdbd.rb` formula asset from [`packaging/homebrew/libravdbd.rb.tmpl`](../packaging/homebrew/libravdbd.rb.tmpl). It is designed for GitHub release assets named:
+
+- `libravdbd-darwin-arm64`
+- `libravdbd-darwin-amd64`
+- `libravdbd-linux-amd64`
+- `libravdbd-linux-arm64`
+
+If your GitHub Actions configuration includes:
+
+- repository variable `HOMEBREW_TAP_REPO`, for example `xDarkicex/homebrew-openclaw-libravdb-memory`
+- repository secret `HOMEBREW_TAP_TOKEN`
+
+then tagged releases also push the generated formula into `Formula/libravdbd.rb` in that tap repository automatically.
+
+Example:
+
+```json
+{
+  "plugins": {
+    "slots": {
+      "memory": "libravdb-memory"
+    },
+    "configs": {
+      "libravdb-memory": {
+        "sidecarPath": "unix:/Users/<you>/.clawdb/run/libravdb.sock"
+      }
+    }
+  }
+}
+```
+
+## Expected Install Shape
+
+Expected successful plugin install shape:
 
 ```text
-[openclaw-memory-libravdb] Sidecar installed (prebuilt clawdb-sidecar-<platform>)
-[openclaw-memory-libravdb] Provisioning embedding model...
-[openclaw-memory-libravdb] Provisioning ONNX runtime...
-[openclaw-memory-libravdb] Provisioning summarizer model... (optional)
-[openclaw-memory-libravdb] Verifying sidecar health...
-[openclaw-memory-libravdb] Setup complete.
 Installed plugin: libravdb-memory
 ```
-
-If the host also activates the plugin into the exclusive memory slot during the
-same flow, output should additionally include a line like:
-
-```text
-Exclusive slot "memory" switched from "memory-core" to "libravdb-memory".
-```
-
-That slot-takeover line is the proof that OpenClaw is no longer using the stock
-memory provider.
-
-Failure shape when a published sidecar asset is missing or cannot be verified:
-
-```text
-[openclaw-memory-libravdb] Unable to install published sidecar clawdb-sidecar-darwin-arm64 for vX.Y.Z.
-[openclaw-memory-libravdb] FATAL: sidecar binary could not be installed.
-```
-
-Published users should not see a local build fallback. If installation fails
-here, the plugin version is missing release assets, the download failed, or the
-published checksum does not match the asset.
 
 ## Activation
 
@@ -204,7 +244,7 @@ Expected output shape:
 
 Interpretation:
 
-- `Sidecar=running` means the Go sidecar booted and answered JSON-RPC `health`.
+- `Sidecar=running` means the local `libravdbd` daemon answered JSON-RPC `health`.
 - `Gate threshold=0.35` confirms the default gating scalar boundary is active.
 - `Abstractive model=not provisioned` is acceptable. The system degrades to extractive compaction.
 
@@ -215,26 +255,43 @@ For contributors working from a clone:
 ```bash
 pnpm check
 cd sidecar && env GOCACHE=/tmp/openclaw-memory-libravdb-gocache go test -race ./... && cd ..
-node scripts/setup.ts
+bash scripts/build-daemon.sh
 ```
 
-Optional direct dev build:
+This produces a local daemon binary in `.daemon-bin/libravdbd` (or `.exe` on Windows) and copies any locally available model/runtime assets there for testing.
+
+## User-Service Templates
+
+Phase 2 packaging assets are included in-repo:
+
+- Linux user service: [`packaging/systemd/libravdbd.service`](../packaging/systemd/libravdbd.service)
+- macOS LaunchAgent: [`packaging/launchd/com.xdarkicex.libravdbd.plist`](../packaging/launchd/com.xdarkicex.libravdbd.plist)
+
+Linux example:
 
 ```bash
-bash scripts/build-sidecar.sh
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/libravdbd.service ~/.config/systemd/user/libravdbd.service
+systemctl --user enable --now libravdbd.service
 ```
 
-This produces a local sidecar in `.sidecar-bin/` and copies any locally available model/runtime assets there for testing.
+macOS example:
+
+1. Copy `packaging/launchd/com.xdarkicex.libravdbd.plist`
+2. Replace `__LIBRAVDBD_PATH__` and `__HOME__`
+3. Save it to `~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`
+4. Load it with `launchctl load ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`
 
 ## Troubleshooting
 
-### Sidecar fails to start
+### Daemon unavailable
 
 Common causes:
 
 - ONNX Runtime library missing or unpacked in the wrong place
 - downloaded model file hash mismatch
-- published sidecar asset missing, unavailable, or failing checksum verification for the requested version
+- `libravdbd` not started for the current user
+- plugin pointed at the wrong endpoint
 
 Check:
 
@@ -242,21 +299,19 @@ Check:
 openclaw memory status
 ```
 
-If the sidecar is down, rerun:
+If the daemon is down, start it and verify the configured endpoint:
 
 ```bash
-node scripts/setup.ts
+libravdbd serve
 ```
 
-### Model download fails
-
-The setup script verifies hashes for required assets. A failed or partial download is deleted and retried on the next run. This is intentional. A model file that exists but fails hash verification is treated as corrupt.
+On macOS/Linux, the default endpoint is `unix:$HOME/.clawdb/run/libravdb.sock`. On Windows, the default endpoint is `tcp:127.0.0.1:37421`.
 
 ### Hash mismatch
 
 Hash mismatch means one of:
 
-- the release asset is corrupt
+- the daemon asset is corrupt
 - the local cache is stale
 - the expected checksum is wrong
 
@@ -264,10 +319,10 @@ Do not bypass this. Delete the asset and rerun setup, or republish the release w
 
 ### Windows behavior
 
-On Windows the sidecar advertises a loopback TCP endpoint instead of a Unix socket. This is expected. The plugin’s transport layer already handles the fallback.
+On Windows the daemon uses a loopback TCP endpoint instead of a Unix socket. This is expected. The plugin’s transport layer already handles the fallback.
 
-### Published sidecar requirement
+### Published daemon requirement
 
-The installer must obtain a published sidecar binary for the current platform.
+The daemon must come from a published `libravdbd` binary for the current platform.
 If that download or checksum verification fails, setup stops instead of falling
 back to a local `go build`.

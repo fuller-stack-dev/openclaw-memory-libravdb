@@ -34,7 +34,7 @@ export function createPluginRuntime(
           } catch {
             // Ignore cleanup failure on startup rejection.
           }
-          throw new Error("LibraVDB sidecar failed health check");
+          throw new Error("LibraVDB daemon failed health check");
         }
         return { rpc, sidecar };
       })().catch((error) => {

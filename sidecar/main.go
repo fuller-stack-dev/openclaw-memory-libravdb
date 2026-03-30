@@ -19,6 +19,24 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "serve":
+			runServe()
+			return
+		case "version":
+			fmt.Println("libravdbd dev")
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %q\nusage: libravdbd [serve|version]\n", os.Args[1])
+			os.Exit(1)
+		}
+	}
+
+	runServe()
+}
+
+func runServe() {
 	cfg := config.FromEnv()
 	if err := preflightONNXRuntime(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -84,7 +102,7 @@ func main() {
 		TechNorm:  cfg.GatingTechNorm,
 		Threshold: cfg.GatingThreshold,
 	})
-	listener, endpoint, cleanup, err := server.Listen()
+	listener, endpoint, cleanup, err := server.Listen(cfg.RPCEndpoint)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)

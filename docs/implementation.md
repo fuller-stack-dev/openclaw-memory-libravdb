@@ -70,29 +70,37 @@ Important boundary:
 - prompt-budget fitting uses a separate host-side chars-per-token heuristic in
   [`src/tokens.ts`](../src/tokens.ts)
 
-## Why the Sidecar Emits Its Endpoint on stdout
+## Why the Daemon Uses a Stable Endpoint
 
 Implemented in [`sidecar/main.go`](../sidecar/main.go) and
 [`src/sidecar.ts`](../src/sidecar.ts).
 
-The sidecar prints its runtime endpoint to stdout on startup instead of binding
-to a fixed path known in advance.
+The daemon binds to a stable, predictable local endpoint instead of advertising
+a per-process endpoint on stdout.
 
 Why:
 
-- fixed Unix socket paths create collision risk across concurrent runs
-- temporary per-process endpoints avoid stale socket cleanup problems
-- Windows already requires a dynamic TCP fallback
+- the published plugin no longer spawns the process itself
+- connect-only plugin startup needs a known endpoint contract
+- user services such as `systemd --user`, launchd, and Homebrew service support
+  work better with a stable socket or loopback address
+- Windows still uses a fixed loopback TCP endpoint because Unix sockets are not
+  the common user-service path there
 
-The host watches stdout, captures the endpoint, and then establishes the
-JSON-RPC transport.
+Current defaults:
+
+- macOS/Linux: `unix:$HOME/.clawdb/run/libravdb.sock`
+- Windows: `tcp:127.0.0.1:37421`
+
+The plugin resolves that configured endpoint and then establishes the JSON-RPC
+transport.
 
 ## Why Degraded Mode Continues the Session
 
 Implemented in [`src/sidecar.ts`](../src/sidecar.ts) and
 [`src/context-engine.ts`](../src/context-engine.ts).
 
-If the sidecar fails repeatedly, the plugin enters degraded mode instead of
+If the daemon connection fails repeatedly, the plugin enters degraded mode instead of
 failing the chat session.
 
 Why:

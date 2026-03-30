@@ -29,12 +29,11 @@ type RuntimeSpec = {
 };
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sidecarDir = path.join(rootDir, "sidecar");
-const sidecarBinDir = path.join(rootDir, ".sidecar-bin");
-const modelsDir = path.join(sidecarBinDir, "models");
-const runtimeDir = path.join(sidecarBinDir, "onnxruntime");
-const binaryName = process.platform === "win32" ? "libravdb-sidecar.exe" : "libravdb-sidecar";
-const sidecarBinary = path.join(sidecarBinDir, binaryName);
+const daemonBinDir = path.join(rootDir, ".daemon-bin");
+const modelsDir = path.join(daemonBinDir, "models");
+const runtimeDir = path.join(daemonBinDir, "onnxruntime");
+const binaryName = process.platform === "win32" ? "libravdbd.exe" : "libravdbd";
+const daemonBinary = path.join(daemonBinDir, binaryName);
 
 const nomicAssets: AssetSpec[] = [
   {
@@ -138,10 +137,10 @@ const runtimeSpecs: Record<string, RuntimeSpec> = {
 };
 
 async function main(): Promise<void> {
-  console.log("[openclaw-memory-libravdb] Installing published sidecar...");
-  buildSidecar();
+  console.log("[openclaw-memory-libravdb] Installing published daemon...");
+  buildDaemon();
 
-  mkdirSync(sidecarBinDir, { recursive: true });
+  mkdirSync(daemonBinDir, { recursive: true });
   mkdirSync(modelsDir, { recursive: true });
   mkdirSync(runtimeDir, { recursive: true });
 
@@ -161,13 +160,13 @@ async function main(): Promise<void> {
   console.log("[openclaw-memory-libravdb] Provisioning summarizer model...");
   await ensureOptionalAssets(t5Assets, writeSummarizerManifest);
 
-  console.log("[openclaw-memory-libravdb] Verifying sidecar health...");
-  await verifySidecarHealth();
+  console.log("[openclaw-memory-libravdb] Verifying daemon health...");
+  await verifyDaemonHealth();
 
   console.log("[openclaw-memory-libravdb] Setup complete.");
 }
 
-function buildSidecar(): void {
+function buildDaemon(): void {
   const result = spawnSync(process.execPath, [path.join(rootDir, "scripts", "postinstall.js")], {
     cwd: rootDir,
     stdio: "inherit",
@@ -350,13 +349,13 @@ async function extractRuntimeArchive(spec: RuntimeSpec, archivePath: string): Pr
   }
 }
 
-async function verifySidecarHealth(): Promise<void> {
-  if (!existsSync(sidecarBinary)) {
-    throw new Error(`Sidecar binary not found after setup: ${sidecarBinary}`);
+async function verifyDaemonHealth(): Promise<void> {
+  if (!existsSync(daemonBinary)) {
+    throw new Error(`Daemon binary not found after setup: ${daemonBinary}`);
   }
 
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-libravdb-setup-"));
-  const child = spawn(sidecarBinary, [], {
+  const child = spawn(daemonBinary, [], {
     cwd: rootDir,
     env: buildChildEnv({
       LIBRAVDB_DB_PATH: tempDir,
@@ -370,7 +369,7 @@ async function verifySidecarHealth(): Promise<void> {
     const endpoint = await waitForEndpoint(child);
     const health = await callHealth(endpoint);
     if (!health.ok) {
-      throw new Error(`Sidecar health check failed: ${health.message ?? "unknown error"}`);
+      throw new Error(`Daemon health check failed: ${health.message ?? "unknown error"}`);
     }
   } finally {
     child.kill();
@@ -387,7 +386,7 @@ function waitForEndpoint(child: ReturnType<typeof spawn>): Promise<string> {
         return;
       }
       settled = true;
-      reject(new Error(`Timed out waiting for sidecar endpoint${stderr ? `: ${stderr.trim()}` : ""}`));
+      reject(new Error(`Timed out waiting for daemon endpoint${stderr ? `: ${stderr.trim()}` : ""}`));
     }, 10000);
 
     const finishResolve = (endpoint: string) => {
@@ -416,7 +415,7 @@ function waitForEndpoint(child: ReturnType<typeof spawn>): Promise<string> {
     child.once("error", (error) => finishReject(error));
     child.once("exit", (code) => {
       finishReject(new Error(
-        `Sidecar exited before advertising endpoint (code ${code ?? "unknown"})${stderr ? `: ${stderr.trim()}` : ""}`,
+        `Daemon exited before advertising endpoint (code ${code ?? "unknown"})${stderr ? `: ${stderr.trim()}` : ""}`,
       ));
     });
 
@@ -474,7 +473,7 @@ function connectTcp(endpoint: string): net.Socket {
   const [host, portText] = raw.split(":");
   const port = Number(portText);
   if (!host || !Number.isFinite(port)) {
-    throw new Error(`Invalid TCP sidecar endpoint: ${endpoint}`);
+    throw new Error(`Invalid TCP daemon endpoint: ${endpoint}`);
   }
   return net.createConnection({ host, port });
 }

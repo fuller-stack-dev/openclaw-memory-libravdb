@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RpcClient } from "../../src/rpc.js";
-import { installSidecarProcessCleanup, resolveEndpoint, startSidecar, type SidecarRuntime } from "../../src/sidecar.js";
+import { resolveEndpoint, startSidecar, type SidecarRuntime } from "../../src/sidecar.js";
 import type { LoggerLike, PluginConfig, SidecarSocket } from "../../src/types.js";
 
 type CloseHandler = () => void;
@@ -95,13 +95,9 @@ function createRuntime(config: {
 }) {
   const sockets: ControlledSocket[] = [];
   const endpoints: string[] = [];
-  const environments: Array<Record<string, string>> = [];
   const scheduled: Array<{ delayMs: number; restart: () => void }> = [];
 
   const runtime: SidecarRuntime = {
-    prepareLaunch(_cfg, env) {
-      environments.push({ ...env });
-    },
     resolveEndpoint: config.resolve ?? ((cfg) => resolveEndpoint(cfg)),
     createSocket(endpoint: string) {
       endpoints.push(endpoint);
@@ -114,7 +110,7 @@ function createRuntime(config: {
     },
   };
 
-  return { runtime, sockets, endpoints, environments, scheduled };
+  return { runtime, sockets, endpoints, scheduled };
 }
 
 test("sidecar crash mid-session reconnects within the restart window", async () => {
@@ -175,67 +171,24 @@ test("windows tcp fallback path starts and serves RPC traffic end to end", async
   assert.equal(handle.isDegraded(), false);
 });
 
-test("sidecar startup forwards embedding config into launch environment", async () => {
-  const runtime = createRuntime({});
-  const logger = createLogger();
-
-  await startSidecar(
-    {
-      rpcTimeoutMs: 50,
-      dbPath: "/tmp/libravdb",
-      embeddingRuntimePath: "/opt/onnx/libonnxruntime.so",
-      embeddingBackend: "onnx-local",
-      embeddingProfile: "nomic-embed-text-v1.5",
-      fallbackProfile: "all-minilm-l6-v2",
-      embeddingModelPath: "/models/minilm.onnx",
-      embeddingTokenizerPath: "/models/tokenizer.json",
-      embeddingDimensions: 384,
-      embeddingNormalize: true,
+test("missing daemon errors point users at libravdbd instead of spawn internals", async () => {
+  const runtime = createRuntime({
+    resolve: () => "unix:/tmp/libravdb.sock",
+  });
+  runtime.runtime.createSocket = () => ({
+    setEncoding() {},
+    on() {},
+    once(event, handler) {
+      if (event === "error") {
+        queueMicrotask(() => (handler as (error: Error) => void)(Object.assign(new Error("missing"), { code: "ENOENT" })));
+      }
     },
-    logger,
-    runtime.runtime,
+    write() {},
+    destroy() {},
+  });
+
+  await assert.rejects(
+    () => startSidecar({ rpcTimeoutMs: 50 }, createLogger(), runtime.runtime),
+    /Install and start libravdbd/,
   );
-
-  assert.deepEqual(runtime.environments[0], {
-    LIBRAVDB_DB_PATH: "/tmp/libravdb",
-    LIBRAVDB_ONNX_RUNTIME: "/opt/onnx/libonnxruntime.so",
-    LIBRAVDB_EMBEDDING_BACKEND: "onnx-local",
-    LIBRAVDB_EMBEDDING_PROFILE: "nomic-embed-text-v1.5",
-    LIBRAVDB_FALLBACK_PROFILE: "all-minilm-l6-v2",
-    LIBRAVDB_EMBEDDING_MODEL: "/models/minilm.onnx",
-    LIBRAVDB_EMBEDDING_TOKENIZER: "/models/tokenizer.json",
-    LIBRAVDB_EMBEDDING_DIMENSIONS: "384",
-    LIBRAVDB_EMBEDDING_NORMALIZE: "true",
-  });
-});
-
-test("process cleanup hooks stop the owned sidecar on host exit signals", () => {
-  const handlers = new Map<string, Set<() => void>>();
-  const host = {
-    once(event: string, handler: () => void) {
-      const set = handlers.get(event) ?? new Set<() => void>();
-      set.add(handler);
-      handlers.set(event, set);
-    },
-    off(event: string, handler: () => void) {
-      handlers.get(event)?.delete(handler);
-    },
-  };
-
-  let stops = 0;
-  const remove = installSidecarProcessCleanup(host, () => {
-    stops += 1;
-  });
-
-  for (const event of ["exit", "SIGINT", "SIGTERM", "SIGHUP"]) {
-    const registered = handlers.get(event);
-    assert.equal(registered?.size, 1);
-    registered?.forEach((handler) => handler());
-  }
-  assert.equal(stops, 1);
-
-  remove();
-  for (const event of ["exit", "SIGINT", "SIGTERM", "SIGHUP"]) {
-    assert.equal(handlers.get(event)?.size ?? 0, 0);
-  }
 });

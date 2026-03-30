@@ -10,6 +10,7 @@ import (
 
 type Config struct {
 	DBPath                  string
+	RPCEndpoint             string
 	ONNXRuntimePath         string
 	EmbeddingBackend        string
 	EmbeddingProfile        string
@@ -39,6 +40,7 @@ type Config struct {
 func FromEnv() Config {
 	return Config{
 		DBPath:                  envOrDefault("LIBRAVDB_DB_PATH", defaultDBPath()),
+		RPCEndpoint:             envOrDefault("LIBRAVDB_RPC_ENDPOINT", defaultRPCEndpoint()),
 		ONNXRuntimePath:         os.Getenv("LIBRAVDB_ONNX_RUNTIME"),
 		EmbeddingBackend:        envOrDefault("LIBRAVDB_EMBEDDING_BACKEND", "bundled"),
 		EmbeddingProfile:        envOrDefault("LIBRAVDB_EMBEDDING_PROFILE", "nomic-embed-text-v1.5"),
@@ -64,6 +66,20 @@ func FromEnv() Config {
 		GatingThreshold:         envFloatOrDefault("LIBRAVDB_GATING_THRESHOLD", 0.35),
 		GatingCentroidK:         envIntOrDefault("LIBRAVDB_GATING_CENTROID_K", 10),
 	}
+}
+
+func defaultRPCEndpoint() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(homeDir) == "" {
+		if isWindows() {
+			return "tcp:127.0.0.1:37421"
+		}
+		return "unix:./.clawdb/run/libravdb.sock"
+	}
+	if isWindows() {
+		return "tcp:127.0.0.1:37421"
+	}
+	return "unix:" + filepath.Join(homeDir, ".clawdb", "run", "libravdb.sock")
 }
 
 func envOrDefault(key, fallback string) string {
@@ -116,4 +132,8 @@ func defaultDBPath() string {
 		return "./libravdb-data"
 	}
 	return filepath.Join(currentUser.HomeDir, ".clawdb", "data")
+}
+
+func isWindows() bool {
+	return os.PathSeparator == '\\'
 }

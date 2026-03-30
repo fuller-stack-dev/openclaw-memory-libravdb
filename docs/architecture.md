@@ -11,8 +11,8 @@ flowchart LR
   Host["OpenClaw host process\n(TypeScript plugin shell)"]
   CE["Context engine factory\nbootstrap / ingest / assemble / compact"]
   MPS["memoryPromptSection\nuser+global recall"]
-  Runtime["Plugin runtime\nlazy sidecar startup + RPC client"]
-  Sidecar["Go sidecar process"]
+  Runtime["Plugin runtime\nlazy daemon connect + RPC client"]
+  Sidecar["Go daemon process"]
   RPC["JSON-RPC over newline-delimited frames\nUnix socket or TCP loopback on Windows"]
   Store["LibraVDB store on disk"]
   Session["session:<sessionId>"]
@@ -47,7 +47,7 @@ Implementation anchors:
 
 - plugin entry: [`src/index.ts`](../src/index.ts)
 - lazy runtime startup: [`src/plugin-runtime.ts`](../src/plugin-runtime.ts)
-- sidecar supervision and endpoint discovery: [`src/sidecar.ts`](../src/sidecar.ts)
+- daemon supervision and endpoint discovery: [`src/sidecar.ts`](../src/sidecar.ts)
 - transport listener: [`sidecar/server/transport.go`](../sidecar/server/transport.go)
 - RPC method table: [`sidecar/server/rpc.go`](../sidecar/server/rpc.go)
 - store: [`sidecar/store/libravdb.go`](../sidecar/store/libravdb.go)
@@ -60,8 +60,8 @@ Implemented in [`src/context-engine.ts`](../src/context-engine.ts).
 
 For every non-heartbeat message:
 
-1. The host gets an RPC client from the plugin runtime. This lazily starts the
-   sidecar if it is not already running.
+1. The host gets an RPC client from the plugin runtime. This lazily connects to
+   the configured daemon endpoint when the plugin is first used.
 2. The message is written to `session:<sessionId>` with `type: "turn"`.
 3. If `message.role === "user"`, the same text is written to `turns:<userId>`.
 4. The host calls `gating_scalar` with `{ userId, text }`.
@@ -120,7 +120,7 @@ and [`sidecar/compact/summarize.go`](../sidecar/compact/summarize.go).
 When compaction is triggered:
 
 1. the host calls `compact_session` with `{ sessionId, force, targetSize }`
-2. the sidecar loads eligible non-summary turns from `session:<sessionId>`
+2. the daemon loads eligible non-summary turns from `session:<sessionId>`
 3. turns are sorted by `(ts, id)` and partitioned into deterministic
    chronological clusters
 4. each cluster is routed to:
@@ -144,8 +144,8 @@ from the original spec phrasing.
 
 | Failure | Current behavior | User impact |
 |---|---|---|
-| Sidecar unavailable on first RPC use | `getRpc()` rejects when lazy startup or health check fails | That hook fails or falls back, but plugin registration itself does not crash eagerly |
-| Sidecar connection closes mid-session | `SidecarSupervisor` retries with exponential backoff until retry budget is exhausted, then enters degraded mode | Memory becomes unavailable until restart succeeds |
+| Daemon unavailable on first RPC use | `getRpc()` rejects when first connect or health check fails | That hook fails or falls back, but plugin registration itself does not crash eagerly |
+| Daemon connection closes mid-session | `SidecarSupervisor` retries with exponential backoff until retry budget is exhausted, then enters degraded mode | Memory becomes unavailable until the daemon is reachable again |
 | `memoryPromptSection` RPC failure | individual searches are caught and replaced with empty result sets | Prompt section becomes empty rather than crashing the run |
 | `assemble` RPC failure | returns original messages, original token count, and empty `systemPromptAddition` | That turn gets no recall augmentation |
 | `ingest` gating or durable insert failure | session write already happened; durable promotion is skipped | Session memory survives, durable memory may miss that turn |
@@ -156,7 +156,7 @@ from the original spec phrasing.
 Relevant code:
 
 - retry/degraded behavior: [`src/sidecar.ts`](../src/sidecar.ts)
-- lazy startup and health gate: [`src/plugin-runtime.ts`](../src/plugin-runtime.ts)
+- lazy daemon connect and health gate: [`src/plugin-runtime.ts`](../src/plugin-runtime.ts)
 - compaction routing and insert/delete ordering:
   [`sidecar/compact/summarize.go`](../sidecar/compact/summarize.go)
 
@@ -166,10 +166,10 @@ The gating decision spans both layers:
 
 1. `ingest` writes the user turn to `turns:<userId>`
 2. the host calls `gating_scalar`
-3. the Go sidecar performs exactly two searches:
+3. the Go daemon performs exactly two searches:
    - `SearchText("turns:<userId>", text, 10, nil)`
    - `SearchText("user:<userId>", text, 5, nil)`
-4. the sidecar computes `GatingSignals` with [`compact.ComputeGating`](../sidecar/compact/gate.go)
+4. the daemon computes `GatingSignals` with [`compact.ComputeGating`](../sidecar/compact/gate.go)
 5. the host compares `g` to `ingestionGateThreshold`
 6. on pass, the host writes the turn into `user:<userId>` with all gating
    metadata fields

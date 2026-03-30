@@ -1,11 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSidecarEnv, computeBackoffMs, isTcpEndpoint, resolveEndpoint } from "../../src/sidecar.js";
+import {
+  buildSidecarEnv,
+  computeBackoffMs,
+  defaultEndpoint,
+  isTcpEndpoint,
+  resolveConfiguredEndpoint,
+  resolveEndpoint,
+} from "../../src/sidecar.js";
 
 test("resolveEndpoint strips unix prefix and keeps tcp endpoints", () => {
   assert.equal(resolveEndpoint({ rpcTimeoutMs: 1, sidecarPath: "unix:/tmp/x.sock" }), "/tmp/x.sock");
   assert.equal(resolveEndpoint({ rpcTimeoutMs: 1, sidecarPath: "tcp:127.0.0.1:7777" }), "tcp:127.0.0.1:7777");
+});
+
+test("resolveConfiguredEndpoint defaults to a stable platform endpoint", () => {
+  assert.equal(resolveConfiguredEndpoint({ rpcTimeoutMs: 1 }), defaultEndpoint());
+});
+
+test("resolveConfiguredEndpoint rejects executable paths", () => {
+  assert.throws(
+    () => resolveConfiguredEndpoint({ rpcTimeoutMs: 1, sidecarPath: "/tmp/libravdbd" }),
+    /Executable paths are no longer supported/,
+  );
+});
+
+test("defaultEndpoint uses unix sockets on unix and localhost TCP on windows", () => {
+  assert.equal(defaultEndpoint("darwin", "/Users/demo"), "unix:/Users/demo/.clawdb/run/libravdb.sock");
+  assert.equal(defaultEndpoint("win32", "C:\\Users\\demo"), "tcp:127.0.0.1:37421");
 });
 
 test("computeBackoffMs applies capped exponential backoff", () => {

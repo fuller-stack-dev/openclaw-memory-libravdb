@@ -1,8 +1,6 @@
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import type { LoggerLike, PluginConfig, SidecarHandle, SidecarSocket } from "./types.js";
 
@@ -11,18 +9,10 @@ type DataHandler = (chunk: string) => void;
 type ErrorHandler = (error: Error) => void;
 
 export interface SidecarRuntime {
-  prepareLaunch?(cfg: PluginConfig, env: Record<string, string>): void | Promise<void>;
   resolveEndpoint(cfg: PluginConfig): string | Promise<string>;
   createSocket(endpoint: string): SidecarSocket;
   scheduleRestart(delayMs: number, restart: () => void): void;
-  stop?(): void | Promise<void>;
 }
-
-type HostSignal = "exit" | "SIGINT" | "SIGTERM" | "SIGHUP";
-type HostProcessLike = {
-  once(event: HostSignal, handler: () => void): void;
-  off?(event: HostSignal, handler: () => void): void;
-};
 
 class PlaceholderSocket implements SidecarSocket {
   private readonly onData = new Set<DataHandler>();
@@ -174,7 +164,7 @@ class SidecarSupervisor implements SidecarHandle {
   }
 
   async start(): Promise<SidecarSocket> {
-    const endpoint = await this.spawnEndpoint();
+    const endpoint = await this.runtime.resolveEndpoint(this.cfg);
     const socket = await this.connectEndpoint(endpoint);
     if (this.socket instanceof SupervisorSocket) {
       this.socket.bind(socket);
@@ -190,14 +180,7 @@ class SidecarSupervisor implements SidecarHandle {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
-    await this.runtime.stop?.();
     this.socket.destroy();
-  }
-
-  private async spawnEndpoint(): Promise<string> {
-    const env = buildSidecarEnv(this.cfg);
-    await this.runtime.prepareLaunch?.(this.cfg, env);
-    return await this.runtime.resolveEndpoint(this.cfg);
   }
 
   private async connectEndpoint(endpoint: string): Promise<SidecarSocket> {
@@ -208,11 +191,13 @@ class SidecarSupervisor implements SidecarHandle {
 
     if (isTcpEndpoint(endpoint)) {
       this.logger.info?.(`[libravdb] using TCP endpoint ${endpoint}`);
+    } else {
+      this.logger.info?.(`[libravdb] using Unix socket ${endpoint}`);
     }
 
     return await new Promise<SidecarSocket>((resolve, reject) => {
       socket.once("connect", () => resolve(socket));
-      socket.once("error", reject);
+      socket.once("error", (error) => reject(formatConnectionError(endpoint, error)));
     });
   }
 
@@ -236,7 +221,7 @@ class SidecarSupervisor implements SidecarHandle {
     this.runtime.scheduleRestart(backoffMs, () => {
       void this.start().catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`[libravdb] sidecar restart failed: ${message}`);
+        this.logger.error(`[libravdb] sidecar reconnect failed: ${message}`);
       });
     });
   }
@@ -245,7 +230,7 @@ class SidecarSupervisor implements SidecarHandle {
 export async function startSidecar(
   cfg: PluginConfig,
   logger: LoggerLike = console,
-  runtime: SidecarRuntime = createDefaultRuntime(logger),
+  runtime: SidecarRuntime = createDefaultRuntime(),
 ): Promise<SidecarHandle> {
   const supervisor = new SidecarSupervisor(cfg, logger, runtime);
   await supervisor.start();
@@ -261,11 +246,31 @@ export function isTcpEndpoint(endpoint: string): boolean {
 }
 
 export function resolveEndpoint(cfg: PluginConfig): string {
-  const endpoint = isConfiguredEndpoint(cfg.sidecarPath)
-    ? (cfg.sidecarPath ?? "unix:/tmp/libravdb.sock")
-    : "unix:/tmp/libravdb.sock";
-
+  const endpoint = resolveConfiguredEndpoint(cfg);
   return endpoint.replace(/^unix:/, "");
+}
+
+export function resolveConfiguredEndpoint(cfg: PluginConfig): string {
+  const value = cfg.sidecarPath?.trim();
+  if (!value || value === "auto") {
+    return defaultEndpoint();
+  }
+  if (!isConfiguredEndpoint(value)) {
+    throw new Error(
+      `LibraVDB sidecarPath must be a daemon endpoint like unix:/path/to/libravdb.sock or tcp:127.0.0.1:37421. Executable paths are no longer supported.`,
+    );
+  }
+  return value;
+}
+
+export function defaultEndpoint(platform = process.platform, homeDir = os.homedir()): string {
+  if (platform === "win32") {
+    return "tcp:127.0.0.1:37421";
+  }
+  const baseDir = homeDir?.trim()
+    ? path.join(homeDir, ".clawdb", "run")
+    : path.join(".", ".clawdb", "run");
+  return `unix:${path.join(baseDir, "libravdb.sock")}`;
 }
 
 export function buildSidecarEnv(cfg: PluginConfig): Record<string, string> {
@@ -356,105 +361,10 @@ export function buildSidecarEnv(cfg: PluginConfig): Record<string, string> {
   return env;
 }
 
-export function installSidecarProcessCleanup(host: HostProcessLike, stop: () => void): () => void {
-  const events: HostSignal[] = ["exit", "SIGINT", "SIGTERM", "SIGHUP"];
-  let stopped = false;
-  const stopOnce = () => {
-    if (stopped) {
-      return;
-    }
-    stopped = true;
-    stop();
-  };
-  for (const event of events) {
-    host.once(event, stopOnce);
-  }
-  return () => {
-    for (const event of events) {
-      host.off?.(event, stopOnce);
-    }
-  };
-}
-
-function createDefaultRuntime(logger: LoggerLike): SidecarRuntime {
-  let launchEnv: Record<string, string> = {};
-  let proc: ReturnType<typeof spawn> | null = null;
-  const stopProc = () => {
-    if (!proc || proc.killed) {
-      proc = null;
-      return;
-    }
-    proc.kill();
-    proc = null;
-  };
-  const removeCleanup = installSidecarProcessCleanup(process, stopProc);
-
+function createDefaultRuntime(): SidecarRuntime {
   return {
-    prepareLaunch(_cfg, env) {
-      launchEnv = { ...env };
-    },
-    async resolveEndpoint(cfg) {
-      if (isConfiguredEndpoint(cfg.sidecarPath)) {
-        return resolveEndpoint(cfg);
-      }
-
-      const binPath = resolveBinPath(cfg.sidecarPath);
-      return await new Promise<string>((resolve, reject) => {
-        stopProc();
-        const child = spawn(binPath, [], {
-          env: {
-            ...process.env,
-            ...launchEnv,
-          },
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        proc = child;
-
-        let stdoutBuffer = "";
-        let settled = false;
-
-        child.stdout.setEncoding("utf8");
-        child.stdout.on("data", (chunk: string) => {
-          if (settled) {
-            return;
-          }
-          stdoutBuffer += chunk;
-          const lines = stdoutBuffer.split("\n");
-          stdoutBuffer = lines.pop() ?? "";
-          const endpoint = lines.find((line) => line.trim().length > 0)?.trim();
-          if (!endpoint) {
-            return;
-          }
-          settled = true;
-          resolve(endpoint);
-        });
-
-        child.stderr.setEncoding("utf8");
-        child.stderr.on("data", (chunk: string) => {
-          if (cfg.logLevel === "debug") {
-            process.stderr.write(chunk);
-          } else {
-            logger.info?.(`[libravdb] sidecar: ${chunk.trim()}`);
-          }
-        });
-
-        child.once("error", (error) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          reject(error);
-        });
-
-        child.once("exit", (code) => {
-          proc = null;
-          if (settled) {
-            return;
-          }
-          settled = true;
-          reject(new Error(`LibraVDB sidecar exited before advertising an endpoint (code ${code ?? "unknown"})`));
-        });
-      });
+    resolveEndpoint(cfg) {
+      return resolveEndpoint(cfg);
     },
     createSocket(endpoint) {
       if (isTcpEndpoint(endpoint)) {
@@ -473,34 +383,30 @@ function createDefaultRuntime(logger: LoggerLike): SidecarRuntime {
     scheduleRestart(delayMs, restart) {
       setTimeout(restart, delayMs);
     },
-    async stop() {
-      stopProc();
-      removeCleanup();
-    },
   };
+}
+
+function formatConnectionError(endpoint: string, error: Error): Error {
+  const code = typeof (error as NodeJS.ErrnoException).code === "string"
+    ? (error as NodeJS.ErrnoException).code
+    : "";
+  if (code === "ENOENT" || code === "ECONNREFUSED") {
+    return new Error(
+      `LibraVDB daemon unavailable at ${describeEndpoint(endpoint)}. Install and start libravdbd, or set sidecarPath to a running daemon endpoint.`,
+    );
+  }
+  return error;
+}
+
+function describeEndpoint(endpoint: string): string {
+  if (isTcpEndpoint(endpoint)) {
+    return endpoint;
+  }
+  return `unix:${endpoint}`;
 }
 
 function isConfiguredEndpoint(value?: string): boolean {
   return value?.startsWith("tcp:") === true || value?.startsWith("unix:") === true;
 }
 
-function resolveBinPath(sidecarPath?: string): string {
-  if (sidecarPath && sidecarPath !== "auto") {
-    return sidecarPath;
-  }
-
-  const binaryName = process.platform === "win32" ? "libravdb-sidecar.exe" : "libravdb-sidecar";
-  const baseDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.resolve(baseDir, "../.sidecar-bin", binaryName),
-    path.resolve(baseDir, "../../.sidecar-bin", binaryName),
-  ];
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return candidates[0];
-}
+export { PlaceholderSocket };

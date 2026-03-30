@@ -16,27 +16,25 @@ The system is designed so a failure in one layer does not automatically collapse
 
 ## Supply Chain and Installer Trust Boundary
 
-This repository uses both `postinstall` and `openclaw.setup`. That is a real
-security-sensitive surface in the OpenClaw ecosystem and should be evaluated
-explicitly rather than hand-waved away.
+The published plugin package intentionally avoids install-time process execution.
+That is a deliberate trust and distribution choice: the OpenClaw plugin is a
+thin client, and the local `libravdbd` daemon is a separate operator-managed
+component.
 
 Current implementation facts:
 
-- [`scripts/postinstall.js`](../scripts/postinstall.js) installs the sidecar
-  binary from published release assets and fails closed if the matching asset is
-  missing or fails checksum verification
-- [`scripts/setup.ts`](../scripts/setup.ts) provisions model/runtime assets and
-  verifies them before they are accepted
-- required downloaded assets are SHA-256 checked before use
-- an asset that exists but fails verification is deleted and re-downloaded
+- the published npm package has no `postinstall`
+- the published plugin manifest does not register `openclaw.setup`
+- the published plugin source contains no direct `child_process` usage
+- the plugin connects only to a configured local endpoint such as
+  `unix:/Users/<you>/.clawdb/run/libravdb.sock` or `tcp:127.0.0.1:37421`
+- daemon installation and lifecycle are explicit user or operator actions
 
-The current installer fetches from these classes of sources only:
+The daemon distribution surface should be evaluated separately from the plugin
+package. If you install `libravdbd` from release assets or another package
+channel, validate that channel directly.
 
-- GitHub release assets for prebuilt sidecar binaries
-- ONNX Runtime release assets
-- model artifacts explicitly referenced in `setup.ts`
-
-After installation, the plugin is local-first:
+After installation, the plugin remains local-first:
 
 - no required network calls are made for embedding
 - no required network calls are made for extractive compaction
@@ -78,7 +76,7 @@ It reduces risk; it does not create a trusted execution environment.
 
 ## Deletion and Data Protection
 
-The sidecar exposes deletion and flush primitives. That matters operationally for:
+The daemon exposes deletion and flush primitives. That matters operationally for:
 
 - user-requested memory removal
 - namespace cleanup

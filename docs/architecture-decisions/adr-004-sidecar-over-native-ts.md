@@ -1,4 +1,4 @@
-# ADR-004: Sidecar Over Native TypeScript
+# ADR-004: Daemon Over Native TypeScript
 
 ## Context
 
@@ -6,7 +6,7 @@ The plugin requires local vector storage, ONNX inference, transport isolation, a
 
 ## Decision
 
-Implement the memory engine as a Go sidecar with a narrow JSON-RPC transport boundary.
+Implement the memory engine as a Go daemon with a narrow JSON-RPC transport boundary.
 
 ## Alternatives Considered
 

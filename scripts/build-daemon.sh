@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="$ROOT_DIR/.sidecar-bin"
-BIN_NAME="libravdb-sidecar"
+OUT_DIR="$ROOT_DIR/.daemon-bin"
+BIN_NAME="libravdbd"
 MODELS_DIR="$ROOT_DIR/.models"
 OUT_MODELS_DIR="$OUT_DIR/models"
 OUT_RUNTIME_DIR="$OUT_DIR/onnxruntime"
 
 if [[ "${OS:-}" == "Windows_NT" ]]; then
-  BIN_NAME="libravdb-sidecar.exe"
+  BIN_NAME="libravdbd.exe"
 fi
 
 mkdir -p "$OUT_DIR"
@@ -27,4 +27,4 @@ if [[ -d "$MODELS_DIR/onnxruntime" ]]; then
   mkdir -p "$OUT_RUNTIME_DIR"
   cp -R "$MODELS_DIR/onnxruntime/." "$OUT_RUNTIME_DIR/"
 fi
-echo "built sidecar: $OUT_DIR/$BIN_NAME"
+echo "built daemon: $OUT_DIR/$BIN_NAME"

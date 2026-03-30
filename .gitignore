@@ -3,6 +3,7 @@
 .models/
 .perl5/
 .sidecar-bin/
+.daemon-bin/
 .ts-build/
 .ts-toolchain/
 
@@ -12,6 +13,7 @@ AGENTS.md
 *.db-shm
 *.db-wal
 *.docx
+*.tgz
 *.pl
 
 node_modules/

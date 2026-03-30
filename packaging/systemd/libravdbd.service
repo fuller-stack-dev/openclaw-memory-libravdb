@@ -1,0 +1,12 @@
+[Unit]
+Description=LibraVDB daemon (user)
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/libravdbd serve
+Restart=on-failure
+RestartSec=5
+Environment=LIBRAVDB_RPC_ENDPOINT=unix:%h/.clawdb/run/libravdb.sock
+
+[Install]
+WantedBy=default.target

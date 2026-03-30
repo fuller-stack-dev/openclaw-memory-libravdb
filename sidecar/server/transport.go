@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -34,32 +33,38 @@ type responseError struct {
 	Message string `json:"message"`
 }
 
-func Listen() (net.Listener, string, func(), error) {
-	if runtime.GOOS == "windows" {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+func Listen(endpoint string) (net.Listener, string, func(), error) {
+	trimmed := strings.TrimSpace(endpoint)
+	switch {
+	case strings.HasPrefix(trimmed, "tcp:"):
+		address := strings.TrimPrefix(trimmed, "tcp:")
+		listener, err := net.Listen("tcp", address)
 		if err != nil {
 			return nil, "", nil, err
 		}
 		return listener, "tcp:" + listener.Addr().String(), func() {
 			_ = listener.Close()
 		}, nil
+	case strings.HasPrefix(trimmed, "unix:"):
+		socketPath := strings.TrimPrefix(trimmed, "unix:")
+		if socketPath == "" {
+			return nil, "", nil, errors.New("unix endpoint requires a socket path")
+		}
+		if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+			return nil, "", nil, err
+		}
+		_ = os.Remove(socketPath)
+		listener, err := net.Listen("unix", socketPath)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return listener, "unix:" + socketPath, func() {
+			_ = listener.Close()
+			_ = os.Remove(socketPath)
+		}, nil
+	default:
+		return nil, "", nil, fmt.Errorf("unsupported RPC endpoint %q; expected tcp:host:port or unix:/path/to/socket", endpoint)
 	}
-
-	dir, err := os.MkdirTemp("", "libravdb-sidecar-*")
-	if err != nil {
-		return nil, "", nil, err
-	}
-	path := filepath.Join(dir, "rpc.sock")
-	listener, err := net.Listen("unix", path)
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, "", nil, err
-	}
-	return listener, path, func() {
-		_ = listener.Close()
-		_ = os.Remove(path)
-		_ = os.RemoveAll(dir)
-	}, nil
 }
 
 func Serve(ctx context.Context, listener net.Listener, srv *Server) error {

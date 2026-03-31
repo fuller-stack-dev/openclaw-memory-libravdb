@@ -10,6 +10,7 @@
     "openclaw.plugin.json",
     "package.json",
     "packaging/",
+    "scripts/",
     "src/",
     "docs/",
     "tsconfig.json",

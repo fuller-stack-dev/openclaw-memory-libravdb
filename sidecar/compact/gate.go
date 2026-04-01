@@ -140,7 +140,8 @@ func computeH(hits []store.SearchResult) float64 {
 	}
 	var sum float64
 	for _, hit := range hits {
-		sum += hit.Score
+		// Negative cosine neighbors should not increase novelty above 1.0.
+		sum += math.Max(hit.Score, 0.0)
 	}
 	return 1.0 - (sum / float64(len(hits)))
 }

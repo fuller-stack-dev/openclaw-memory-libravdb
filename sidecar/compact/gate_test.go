@@ -14,6 +14,30 @@ func TestHEmptyMemory(t *testing.T) {
 	}
 }
 
+func TestHClampsNegativeCosineNeighbors(t *testing.T) {
+	memHits := []store.SearchResult{
+		{ID: "a", Score: -0.9},
+		{ID: "b", Score: -0.2},
+		{ID: "c", Score: 0.0},
+	}
+	sig := ComputeGating(nil, memHits, "any text", DefaultGatingConfig())
+	if sig.H != 1.0 {
+		t.Errorf("H = %.6f, want 1.0 when all cosine neighbors are non-positive", sig.H)
+	}
+}
+
+func TestHMixesPositiveAndNegativeCosineNeighbors(t *testing.T) {
+	memHits := []store.SearchResult{
+		{ID: "a", Score: 0.75},
+		{ID: "b", Score: -0.25},
+	}
+	sig := ComputeGating(nil, memHits, "any text", DefaultGatingConfig())
+	want := 1.0 - (0.75 / 2.0)
+	if math.Abs(sig.H-want) > 1e-9 {
+		t.Errorf("H = %.6f, want %.6f with negative neighbors clamped to zero", sig.H, want)
+	}
+}
+
 func TestRSaturationVetoes(t *testing.T) {
 	turnHits := hitsWithScore(10, 0.95)
 	memHits := hitsWithScore(5, 0.95)
@@ -34,6 +58,21 @@ func TestGConvexBound(t *testing.T) {
 		if sig.G < lo-1e-9 || sig.G > hi+1e-9 {
 			t.Errorf("G = %.6f not in [Gconv=%.6f, Gtech=%.6f]", sig.G, sig.Gconv, sig.Gtech)
 		}
+	}
+}
+
+func TestGConvexBoundWithNegativeMemoryHits(t *testing.T) {
+	memHits := []store.SearchResult{
+		{ID: "a", Score: -1.0},
+		{ID: "b", Score: -0.4},
+		{ID: "c", Score: 0.2},
+	}
+	sig := ComputeGating(nil, memHits, "I prefer dark mode", DefaultGatingConfig())
+	if sig.H < 0.0 || sig.H > 1.0 {
+		t.Fatalf("H = %.6f out of [0,1] with negative cosine neighbors", sig.H)
+	}
+	if sig.G < 0.0 || sig.G > 1.0 {
+		t.Fatalf("G = %.6f out of [0,1] with negative cosine neighbors", sig.G)
 	}
 }
 

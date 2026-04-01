@@ -45,6 +45,11 @@ type Summary struct {
 	Confidence float64
 }
 
+type PreservationMetrics struct {
+	Align float64
+	Cover float64
+}
+
 type SummaryOpts struct {
 	MaxOutputTokens int
 	MinInputTurns   int
@@ -181,6 +186,16 @@ func (e *Engine) Warmup(ctx context.Context) error { return e.backend.Warmup(ctx
 func (e *Engine) Unload()                          { e.backend.Unload() }
 func (e *Engine) Close() error                     { return e.backend.Close() }
 
+func (e *Engine) CanonicalEmbedder() embed.Embedder {
+	provider, ok := e.backend.(interface {
+		CanonicalEmbedder() embed.Embedder
+	})
+	if !ok {
+		return nil
+	}
+	return provider.CanonicalEmbedder()
+}
+
 func (b unavailableBackend) Summarize(_ context.Context, _ []Turn, _ SummaryOpts) (Summary, error) {
 	return Summary{}, fmt.Errorf("summarizer backend is unavailable: %s", b.reason)
 }
@@ -267,6 +282,9 @@ func (s *ExtractiveSummarizer) Close() error                   { return nil }
 func (s *ExtractiveSummarizer) Ready() bool                    { return true }
 func (s *ExtractiveSummarizer) Reason() string                 { return "" }
 func (s *ExtractiveSummarizer) Mode() string                   { return "extractive" }
+func (s *ExtractiveSummarizer) CanonicalEmbedder() embed.Embedder {
+	return s.embedder
+}
 
 func normalizeSummaryOpts(opts SummaryOpts) SummaryOpts {
 	if opts.MinInputTurns <= 0 {
@@ -395,6 +413,36 @@ func unavailable(cfg Config, reason string) unavailableBackend {
 			Endpoint:  strings.TrimSpace(cfg.Endpoint),
 		},
 	}
+}
+
+func EvaluatePreservation(ctx context.Context, e embed.Embedder, turns []Turn, summaryText string) (PreservationMetrics, error) {
+	if e == nil {
+		return PreservationMetrics{}, fmt.Errorf("embedder is required")
+	}
+	if len(turns) == 0 {
+		return PreservationMetrics{}, fmt.Errorf("at least one turn is required")
+	}
+	summaryVec, err := e.EmbedDocument(ctx, summaryText)
+	if err != nil {
+		return PreservationMetrics{}, err
+	}
+	vectors := make([][]float32, 0, len(turns))
+	for _, turn := range turns {
+		vec, err := e.EmbedDocument(ctx, turn.Text)
+		if err != nil {
+			return PreservationMetrics{}, err
+		}
+		vectors = append(vectors, vec)
+	}
+	centroid := meanVector(vectors)
+	out := PreservationMetrics{
+		Align: cosine(summaryVec, centroid),
+	}
+	for _, vec := range vectors {
+		out.Cover += math.Max(0, cosine(summaryVec, vec))
+	}
+	out.Cover /= float64(len(vectors))
+	return out, nil
 }
 
 func meanVector(vectors [][]float32) []float32 {

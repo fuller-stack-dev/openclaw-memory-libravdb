@@ -5,19 +5,21 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math"
 	"testing"
 
+	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/embed"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/store"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/summarize"
 )
 
 type fakeStore struct {
-	results       []store.SearchResult
-	insertCalls   []insertCall
-	deleteCalls   []deleteCall
-	deleteErr     error
-	listErr       error
-	insertErr     error
+	results     []store.SearchResult
+	insertCalls []insertCall
+	deleteCalls []deleteCall
+	deleteErr   error
+	listErr     error
+	insertErr   error
 }
 
 type insertCall struct {
@@ -37,6 +39,11 @@ type fakeSummarizer struct {
 	err       error
 	calls     [][]summarize.Turn
 	mode      string
+	embedder  embed.Embedder
+}
+
+type fakeEmbedder struct {
+	vectors map[string][]float32
 }
 
 func (f *fakeStore) ListByMeta(_ context.Context, collection, key, value string) ([]store.SearchResult, error) {
@@ -89,18 +96,38 @@ func (f *fakeSummarizer) Summarize(_ context.Context, turns []summarize.Turn, _ 
 	}, nil
 }
 
-func (f *fakeSummarizer) Profile() summarize.Profile               { return summarize.Profile{Backend: "extractive"} }
-func (f *fakeSummarizer) Warmup(context.Context) error             { return nil }
-func (f *fakeSummarizer) Unload()                                  {}
-func (f *fakeSummarizer) Close() error                             { return nil }
-func (f *fakeSummarizer) Ready() bool                              { return true }
-func (f *fakeSummarizer) Reason() string                           { return "" }
+func (f *fakeSummarizer) Profile() summarize.Profile        { return summarize.Profile{Backend: "extractive"} }
+func (f *fakeSummarizer) Warmup(context.Context) error      { return nil }
+func (f *fakeSummarizer) Unload()                           {}
+func (f *fakeSummarizer) Close() error                      { return nil }
+func (f *fakeSummarizer) Ready() bool                       { return true }
+func (f *fakeSummarizer) Reason() string                    { return "" }
+func (f *fakeSummarizer) CanonicalEmbedder() embed.Embedder { return f.embedder }
 func (f *fakeSummarizer) Mode() string {
 	if f.mode != "" {
 		return f.mode
 	}
 	return "extractive"
 }
+
+func (f fakeEmbedder) EmbedDocument(_ context.Context, text string) ([]float32, error) {
+	if vec, ok := f.vectors[text]; ok {
+		return append([]float32(nil), vec...), nil
+	}
+	return []float32{0, 0}, nil
+}
+
+func (f fakeEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
+	return f.EmbedDocument(context.Background(), text)
+}
+
+func (f fakeEmbedder) Dimensions() int { return 2 }
+func (f fakeEmbedder) Profile() embed.Profile {
+	return embed.Profile{Backend: "test", Family: "test", Dimensions: 2}
+}
+func (f fakeEmbedder) Ready() bool    { return true }
+func (f fakeEmbedder) Reason() string { return "" }
+func (f fakeEmbedder) Mode() string   { return "primary" }
 
 func TestCompactSessionSkipsBelowThresholdWithoutForce(t *testing.T) {
 	st := &fakeStore{
@@ -233,6 +260,13 @@ func TestCompactSessionPreservesSourceTurnsWhenInsertFails(t *testing.T) {
 }
 
 func TestCompactSessionRoutesHighGatingClustersToAbstractive(t *testing.T) {
+	embedder := fakeEmbedder{
+		vectors: map[string][]float32{
+			"alpha":               {1, 0},
+			"beta":                {1, 0},
+			"abstractive-summary": {1, 0},
+		},
+	}
 	st := &fakeStore{
 		results: []store.SearchResult{
 			{ID: "a", Text: "alpha", Metadata: map[string]any{"sessionId": "s1", "ts": int64(10), "gating_score": 0.8}},
@@ -242,6 +276,7 @@ func TestCompactSessionRoutesHighGatingClustersToAbstractive(t *testing.T) {
 	extractive := &fakeSummarizer{
 		summaries: []summarize.Summary{{Text: "extractive-summary", Method: "extractive", TokenCount: 2, Confidence: 0.5}},
 		mode:      "extractive",
+		embedder:  embedder,
 	}
 	abstractive := &fakeSummarizer{
 		summaries: []summarize.Summary{{Text: "abstractive-summary", Method: "onnx-t5", TokenCount: 3, Confidence: 0.9}},
@@ -263,6 +298,18 @@ func TestCompactSessionRoutesHighGatingClustersToAbstractive(t *testing.T) {
 	}
 	if got.SummaryMethod != "onnx-t5" {
 		t.Fatalf("expected onnx-t5 method, got %+v", got)
+	}
+	if len(st.insertCalls) != 1 {
+		t.Fatalf("expected one summary insert, got %d", len(st.insertCalls))
+	}
+	if got, ok := st.insertCalls[0].meta["confidence"].(float64); !ok || math.Abs(got-0.98) > 1e-9 {
+		t.Fatalf("expected hybrid confidence 0.98, got %+v", st.insertCalls[0].meta["confidence"])
+	}
+	if got := st.insertCalls[0].meta["confidence_nomic"]; got != 1.0 {
+		t.Fatalf("expected nomic confidence metadata, got %+v", got)
+	}
+	if got := st.insertCalls[0].meta["confidence_t5"]; got != 0.9 {
+		t.Fatalf("expected t5 confidence metadata, got %+v", got)
 	}
 }
 
@@ -303,6 +350,81 @@ func TestCompactSessionRoutesMissingGatingScoreToExtractiveAndLogsDecision(t *te
 	logged := buf.String()
 	if !bytes.Contains([]byte(logged), []byte("cluster_id=0")) || !bytes.Contains([]byte(logged), []byte("mean_gating_score=0.000")) || !bytes.Contains([]byte(logged), []byte("summarizer_used=extractive")) {
 		t.Fatalf("expected routing telemetry log, got %q", logged)
+	}
+}
+
+func TestCompactSessionFallsBackToExtractiveWhenAbstractiveFailsPreservationGate(t *testing.T) {
+	embedder := fakeEmbedder{
+		vectors: map[string][]float32{
+			"alpha":              {1, 0},
+			"beta":               {1, 0},
+			"drifted-summary":    {0, 1},
+			"extractive-summary": {1, 0},
+		},
+	}
+	st := &fakeStore{
+		results: []store.SearchResult{
+			{ID: "a", Text: "alpha", Metadata: map[string]any{"sessionId": "s1", "ts": int64(10), "gating_score": 0.8}},
+			{ID: "b", Text: "beta", Metadata: map[string]any{"sessionId": "s1", "ts": int64(20), "gating_score": 0.8}},
+		},
+	}
+	extractive := &fakeSummarizer{
+		summaries: []summarize.Summary{{Text: "extractive-summary", Method: "extractive", TokenCount: 2, Confidence: 0.2}},
+		mode:      "extractive",
+		embedder:  embedder,
+	}
+	abstractive := &fakeSummarizer{
+		summaries: []summarize.Summary{{Text: "drifted-summary", Method: "onnx-t5", TokenCount: 2, Confidence: 0.95}},
+		mode:      "onnx-local",
+	}
+
+	got, err := CompactSession(context.Background(), st, extractive, abstractive, "s1", true, 20)
+	if err != nil {
+		t.Fatalf("CompactSession() error = %v", err)
+	}
+	if got.SummaryMethod != "extractive" {
+		t.Fatalf("expected extractive fallback, got %+v", got)
+	}
+	if len(abstractive.calls) != 1 {
+		t.Fatalf("expected one abstractive attempt, got %d", len(abstractive.calls))
+	}
+	if len(extractive.calls) != 1 {
+		t.Fatalf("expected one extractive fallback, got %d", len(extractive.calls))
+	}
+	if len(st.insertCalls) != 1 {
+		t.Fatalf("expected one insert, got %d", len(st.insertCalls))
+	}
+	if st.insertCalls[0].text != "extractive-summary" {
+		t.Fatalf("expected extractive summary text after fallback, got %q", st.insertCalls[0].text)
+	}
+	if got := st.insertCalls[0].meta["confidence"]; got != 1.0 {
+		t.Fatalf("expected fallback confidence 1.0, got %+v", got)
+	}
+	if got := st.insertCalls[0].meta["confidence_t5"]; got != 0.95 {
+		t.Fatalf("expected original t5 confidence metadata preserved, got %+v", got)
+	}
+}
+
+func TestEvaluatePreservationMetricsAverageAlignmentAndCoverage(t *testing.T) {
+	embedder := fakeEmbedder{
+		vectors: map[string][]float32{
+			"turn-a":  {1, 0},
+			"turn-b":  {0, 1},
+			"summary": {1, 0},
+		},
+	}
+	metrics, err := summarize.EvaluatePreservation(context.Background(), embedder, []summarize.Turn{
+		{ID: "a", Text: "turn-a"},
+		{ID: "b", Text: "turn-b"},
+	}, "summary")
+	if err != nil {
+		t.Fatalf("EvaluatePreservation() error = %v", err)
+	}
+	if math.Abs(metrics.Align-math.Sqrt(0.5)) > 1e-9 {
+		t.Fatalf("unexpected align %.9f", metrics.Align)
+	}
+	if metrics.Cover != 0.5 {
+		t.Fatalf("unexpected cover %.9f", metrics.Cover)
 	}
 }
 

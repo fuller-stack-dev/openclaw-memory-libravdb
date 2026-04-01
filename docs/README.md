@@ -4,6 +4,7 @@
 - [architecture.md](./architecture.md) - End-to-end component model, turn lifecycle, compaction flow, and degraded behavior.
 - [problem.md](./problem.md) - Technical argument for replacing the stock OpenClaw memory lifecycle in this use case.
 - [mathematics-v2.md](./mathematics-v2.md) - Formal reference for hybrid scoring, decay, token budgeting, Matryoshka retrieval, compaction, and planned two-pass retrieval.
+- [compaction-evaluation.md](./compaction-evaluation.md) - Real-model benchmark notes for T5 summary confidence, Nomic-space preservation, and the hard preservation gate.
 - [continuity.md](./continuity.md) - Continuity model for invariant context, preserved recent raw session tail, and retrieved older memory.
 - [ast.md](./ast.md) - AST-based partitioning rules that map authored Markdown into invariant and variant context sets.
 - [gating.md](./gating.md) - Full derivation and calibration guide for the domain-adaptive gating scalar.

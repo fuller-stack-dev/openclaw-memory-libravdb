@@ -12,14 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/embed"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/store"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/summarize"
 )
 
 const (
-	DefaultTargetSize     = 20
-	DefaultMaxOutputTokens = 64
+	DefaultTargetSize           = 20
+	DefaultMaxOutputTokens      = 64
 	AbstractiveRoutingThreshold = 0.60
+	PreservationThreshold       = 0.65
+	NomicConfidenceWeight       = 0.80
 )
 
 type Store interface {
@@ -45,6 +48,13 @@ type turnRecord struct {
 	text     string
 	metadata map[string]any
 	ts       int64
+}
+
+type qualityMetadata struct {
+	Align     float64
+	Cover     float64
+	ConfT5    float64
+	ConfNomic float64
 }
 
 func CompactSession(
@@ -112,7 +122,6 @@ func CompactSession(
 		}
 
 		summarizer, meanGating := routeSummarizer(group.turns, extractive, abstractive)
-		log.Printf("compaction: cluster_id=%d mean_gating_score=%.3f summarizer_used=%s", idx, meanGating, summarizer.Mode())
 
 		summary, err := summarizer.Summarize(ctx, summaryTurns, summarize.SummaryOpts{
 			MinInputTurns:   1,
@@ -121,13 +130,18 @@ func CompactSession(
 		if err != nil {
 			return Result{}, fmt.Errorf("cluster %d summarize failed: %w", idx, err)
 		}
+		quality, summary, err := finalizeSummaryQuality(ctx, extractive, summarizer, summaryTurns, summary)
+		if err != nil {
+			return Result{}, fmt.Errorf("cluster %d quality evaluation failed: %w", idx, err)
+		}
+		log.Printf("compaction: cluster_id=%d mean_gating_score=%.3f summarizer_used=%s", idx, meanGating, summary.Method)
 		if strings.TrimSpace(summary.Text) == "" {
 			return Result{}, fmt.Errorf("cluster %d summarize produced empty text", idx)
 		}
 
 		summary.SourceIDs = append([]string(nil), sourceIDs...)
 
-		metadata := summaryMetadata(sessionID, now, summary, group.turns)
+		metadata := summaryMetadata(sessionID, now, summary, group.turns, quality)
 		summaryID := summaryRecordID(sessionID, summary.SourceIDs)
 		if err := st.InsertText(ctx, collection, summaryID, summary.Text, metadata); err != nil {
 			return Result{}, fmt.Errorf("summary insert failed, source turns preserved: %w", err)
@@ -158,6 +172,64 @@ func routeSummarizer(turns []turnRecord, extractive summarize.Summarizer, abstra
 		return abstractive, meanGating
 	}
 	return extractive, meanGating
+}
+
+func finalizeSummaryQuality(ctx context.Context, extractive summarize.Summarizer, used summarize.Summarizer, turns []summarize.Turn, summary summarize.Summary) (qualityMetadata, summarize.Summary, error) {
+	e := canonicalEmbedder(extractive)
+	if e == nil {
+		return qualityMetadata{}, summary, nil
+	}
+	metrics, err := summarize.EvaluatePreservation(ctx, e, turns, summary.Text)
+	if err != nil {
+		return qualityMetadata{}, summarize.Summary{}, err
+	}
+	confNomic := clamp01((metrics.Align + metrics.Cover) / 2.0)
+	confT5 := clamp01(summary.Confidence)
+
+	if summary.Method == "onnx-t5" && metrics.Align < PreservationThreshold {
+		fallback, err := extractive.Summarize(ctx, turns, summarize.SummaryOpts{
+			MinInputTurns:   1,
+			MaxOutputTokens: DefaultMaxOutputTokens,
+		})
+		if err != nil {
+			return qualityMetadata{}, summarize.Summary{}, fmt.Errorf("preservation fallback summarize failed: %w", err)
+		}
+		fallbackMetrics, err := summarize.EvaluatePreservation(ctx, e, turns, fallback.Text)
+		if err != nil {
+			return qualityMetadata{}, summarize.Summary{}, fmt.Errorf("preservation fallback metrics failed: %w", err)
+		}
+		fallbackConf := clamp01((fallbackMetrics.Align + fallbackMetrics.Cover) / 2.0)
+		fallback.Confidence = fallbackConf
+		return qualityMetadata{
+			Align:     fallbackMetrics.Align,
+			Cover:     fallbackMetrics.Cover,
+			ConfT5:    confT5,
+			ConfNomic: fallbackConf,
+		}, fallback, nil
+	}
+
+	if summary.Method == "onnx-t5" {
+		summary.Confidence = clamp01(NomicConfidenceWeight*confNomic + (1.0-NomicConfidenceWeight)*confT5)
+	} else {
+		summary.Confidence = confNomic
+	}
+	_ = used
+	return qualityMetadata{
+		Align:     metrics.Align,
+		Cover:     metrics.Cover,
+		ConfT5:    confT5,
+		ConfNomic: confNomic,
+	}, summary, nil
+}
+
+func canonicalEmbedder(s summarize.Summarizer) embed.Embedder {
+	provider, ok := s.(interface {
+		CanonicalEmbedder() embed.Embedder
+	})
+	if !ok {
+		return nil
+	}
+	return provider.CanonicalEmbedder()
 }
 
 func meanGatingScore(turns []turnRecord) float64 {
@@ -228,7 +300,7 @@ func partitionChronological(turns []turnRecord, targetSize int) []cluster {
 	return out
 }
 
-func summaryMetadata(sessionID string, compactedAt int64, summary summarize.Summary, turns []turnRecord) map[string]any {
+func summaryMetadata(sessionID string, compactedAt int64, summary summarize.Summary, turns []turnRecord, quality qualityMetadata) map[string]any {
 	meta := map[string]any{
 		"type":         "summary",
 		"ts":           compactedAt,
@@ -239,6 +311,14 @@ func summaryMetadata(sessionID string, compactedAt int64, summary summarize.Summ
 		"confidence":   clamp01(summary.Confidence),
 		"compacted_at": compactedAt,
 		"decay_rate":   clamp01(1.0 - summary.Confidence),
+	}
+	if quality.Align != 0 || quality.Cover != 0 || quality.ConfT5 != 0 || quality.ConfNomic != 0 {
+		meta["nomic_align"] = quality.Align
+		meta["nomic_cover"] = quality.Cover
+		meta["confidence_nomic"] = quality.ConfNomic
+		if summary.Method == "onnx-t5" || quality.ConfT5 > 0 {
+			meta["confidence_t5"] = quality.ConfT5
+		}
 	}
 
 	for _, turn := range turns {

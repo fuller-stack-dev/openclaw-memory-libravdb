@@ -432,28 +432,127 @@ Implemented across [`sidecar/compact/summarize.go`](../sidecar/compact/summarize
 [`sidecar/summarize/engine.go`](../sidecar/summarize/engine.go), and
 [`sidecar/summarize/onnx_local.go`](../sidecar/summarize/onnx_local.go).
 
-The confidence term is a clamped quality signal:
+For the first real-model benchmark pass comparing raw T5 confidence against
+Nomic-space preservation metrics and the hard preservation gate, see
+[`compaction-evaluation.md`](./compaction-evaluation.md).
+
+### 5.1 Semiotic Mismatch
+
+The system uses:
+
+- T5-small as an optional local abstractive decoder
+- Nomic `nomic-embed-text-v1.5` as the canonical retrieval embedding space
+
+Those models do not measure the same thing.
+
+The raw T5 confidence term is:
 
 $$
-\mathrm{confidence}(s) = \max\!\left(0,\;\min\!\left(1,\; c_{raw}(s)\right)\right)
+\mathrm{conf}_{\mathrm{t5}}(s, C_j) =
+\exp\!\left(\frac{1}{m}\sum_{i=1}^{m}\log p(x_i \mid x_{<i}, C_j)\right)
 $$
 
-with backend-specific definitions for the raw value $c_{raw}(s)$:
+where $x_i$ are generated summary tokens. This measures decoder
+self-consistency, not geometric preservation in the vector space used later for
+retrieval.
+
+So a T5 summary can be locally confident while still drifting away from the
+source cluster in Nomic space.
+
+### 5.2 Nomic-Space Preservation
+
+Let the embedding function be:
 
 $$
-c_{raw,\,extractive}(s) =
-\text{mean cosine similarity of selected turns to the cluster centroid}
+E : \text{text} \to \mathbb{R}^d
+$$
+
+For a source cluster $C_j = \langle t_1, \dots, t_n \rangle$, define:
+
+$$
+v_i = E(t_i)
 $$
 
 $$
-c_{raw,\,onnx}(s) =
-\exp\!\left(\frac{\sum_{i=1}^{n}\log p(t_i \mid t_{<i}, C_j)}{n}\right)
+\mu_C = \frac{1}{n}\sum_{i=1}^{n} v_i
 $$
 
-where $t_i$ are generated summary tokens and $C_j$ is the source cluster. The
-ONNX path is in $(0,1]$ by construction (exponentiated mean of non-positive
-log-probabilities). The extractive path produces cosine similarity in $[-1,1]$;
-the clamp projects it onto $[0,1]$.
+$$
+v_s = E(s)
+$$
+
+where cosine similarity renormalizes vectors at comparison time, so $\mu_C$
+does not need separate unit normalization in the definition below.
+
+The primary preservation term is centroid alignment:
+
+$$
+Q_{\mathrm{align}}(s, C_j) = \cos(v_s, \mu_C)
+$$
+
+The secondary preservation term is average positive source coverage:
+
+$$
+Q_{\mathrm{cover}}(s, C_j) =
+\frac{1}{n}\sum_{i=1}^{n}\max(0, \cos(v_s, v_i))
+$$
+
+The Nomic-space confidence term is then:
+
+$$
+\mathrm{conf}_{\mathrm{nomic}}(s, C_j) =
+\max\!\left(0,\;\min\!\left(1,\;\frac{Q_{\mathrm{align}} + Q_{\mathrm{cover}}}{2}\right)\right)
+$$
+
+This is the canonical compaction quality signal because it is defined in the
+same geometric space the vector store uses at retrieval time.
+
+### 5.3 Preservation Gate
+
+Before an abstractive T5 summary is accepted, it must pass a hard preservation
+gate:
+
+$$
+Q_{\mathrm{align}}(s, C_j) \ge \tau_{\mathrm{preserve}}
+$$
+
+with the shipped default:
+
+$$
+\tau_{\mathrm{preserve}} = 0.65
+$$
+
+If the abstractive summary fails this test, the system rejects it and falls back
+to deterministic extractive compaction.
+
+This means the decoder may propose a summary, but Nomic-space preservation
+decides whether it is faithful enough to become memory.
+
+### 5.4 Final Confidence
+
+For extractive summaries, the final stored confidence is:
+
+$$
+\mathrm{confidence}(s) = \mathrm{conf}_{\mathrm{nomic}}(s, C_j)
+$$
+
+For accepted abstractive T5 summaries, the final stored confidence is a
+Nomic-heavy hybrid:
+
+$$
+\mathrm{confidence}(s) =
+\lambda \cdot \mathrm{conf}_{\mathrm{nomic}}(s, C_j)
++ (1-\lambda)\cdot \mathrm{conf}_{\mathrm{t5}}(s, C_j)
+$$
+
+with the shipped default:
+
+$$
+\lambda = 0.8
+$$
+
+So Nomic-space preservation remains the dominant term, while T5 decoder
+confidence contributes only auxiliary stability information.
 
 Therefore:
 
@@ -461,7 +560,11 @@ $$
 \mathrm{confidence}(s) \in [0,1]
 $$
 
-for all valid inputs.
+for all valid inputs, because both $\mathrm{conf}_{\mathrm{nomic}}$ and
+$\mathrm{conf}_{\mathrm{t5}}$ are bounded in $[0,1]$ and the hybrid is a convex
+combination.
+
+### 5.5 Retrieval Decay Multiplier
 
 The retrieval decay metadata is then:
 

@@ -1,10 +1,7 @@
 import type { SearchResult } from "./types.js";
 
 export function buildMemoryHeader(selected: SearchResult[]): string {
-  const authored = selected.filter((item) =>
-    item.metadata.authored === true &&
-    (item.metadata.tier === 1 || item.metadata.tier === 2),
-  );
+  const authored = selected.filter(isAuthoredInvariant);
   const recentTail = selected
     .filter((item) => item.metadata.continuity_tail === true)
     .sort((left, right) => metadataTimestamp(left) - metadataTimestamp(right));
@@ -53,7 +50,7 @@ export function buildMemoryHeader(selected: SearchResult[]): string {
 }
 
 export function buildInjectedMemoryMessageContent(item: SearchResult): string {
-  if (item.metadata.authored === true && (item.metadata.tier === 1 || item.metadata.tier === 2)) {
+  if (isAuthoredInvariant(item)) {
     return item.text;
   }
   if (item.metadata.continuity_tail === true) {
@@ -79,11 +76,19 @@ function inferRole(item: SearchResult, source: "recalled" | "session"): "user" |
   if (source === "session") {
     return "unknown";
   }
+  // Older recalled records can predate metadata.role. Keep the fallback narrow:
+  // only user collections prove user provenance, and everything else stays unknown.
   const collection = typeof item.metadata.collection === "string" ? item.metadata.collection : "";
   if (collection.startsWith("user:")) {
     return "user";
   }
   return "unknown";
+}
+
+function isAuthoredInvariant(item: SearchResult): boolean {
+  // Authored tiers 1-2 are startup invariants injected raw. Higher authored tiers
+  // stay in searchable lore and therefore keep provenance tagging.
+  return item.metadata.authored === true && (item.metadata.tier === 1 || item.metadata.tier === 2);
 }
 
 function escapeAttribute(value: string): string {

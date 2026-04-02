@@ -14,14 +14,12 @@ signal is strong enough to matter.
 - [Uninstall guide](./docs/uninstall.md) for clean plugin removal, daemon shutdown, and optional data cleanup.
 - [Full installation reference](./docs/installation.md) for deeper operational detail, troubleshooting, and packaging notes.
 
-Quick start on macOS:
+Start with the [install guide](./docs/install.md) for the supported daemon
+setup paths and activation flow. The short version is:
 
-```bash
-brew tap xDarkicex/openclaw-libravdb-memory
-brew install libravdbd
-brew services start libravdbd
-openclaw plugins install @xdarkicex/openclaw-memory-libravdb
-```
+- install the plugin with `openclaw plugins install @xdarkicex/openclaw-memory-libravdb`
+- install and start `libravdbd` separately
+- assign `libravdb-memory` to the OpenClaw `memory` slot
 
 Then activate the plugin in `~/.openclaw/openclaw.json`:
 

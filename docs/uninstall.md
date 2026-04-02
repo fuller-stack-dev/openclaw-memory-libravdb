@@ -46,7 +46,7 @@ systemctl --user disable --now libravdbd.service
 macOS LaunchAgent:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist
+launchctl bootout gui/$(id -u)/com.xdarkicex.libravdbd
 ```
 
 Foreground manual run:

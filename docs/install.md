@@ -1,13 +1,8 @@
 # Install Guide
 
-This guide covers the supported lifecycle for the OpenClaw / OpenClaw.ai memory
-plugin and the separate `libravdbd` sidecar daemon.
-
-The key contract is simple:
-
-- the plugin is installable as a normal OpenClaw package
-- the daemon is managed separately
-- the plugin connects to a daemon endpoint instead of spawning its own binary
+LibraVDB Memory is a connect-only OpenClaw plugin. Install the plugin as a
+normal package, install `libravdbd` separately, and point the plugin at the
+daemon endpoint when you need a non-default location.
 
 For deeper operational detail, use the full
 [installation reference](./installation.md).
@@ -108,6 +103,8 @@ If you are not using Homebrew, manage the daemon explicitly.
 Linux user service from the repo template:
 
 ```bash
+# Replace vX.Y.Z with the latest tag from:
+# https://github.com/xDarkicex/openclaw-memory-libravdb/releases
 mkdir -p ~/.local/bin ~/.config/systemd/user
 curl -L -o ~/.local/bin/libravdbd https://github.com/xDarkicex/openclaw-memory-libravdb/releases/download/vX.Y.Z/libravdbd-linux-amd64
 chmod +x ~/.local/bin/libravdbd
@@ -122,7 +119,17 @@ macOS LaunchAgent from the repo template:
    `https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/packaging/launchd/com.xdarkicex.libravdbd.plist`
 2. Replace `__HOME__` with your home directory.
 3. Save it to `~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`.
-4. Load it with `launchctl load ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`.
+4. Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`.
+
+### Windows
+
+Windows uses a loopback TCP endpoint by default:
+
+- `tcp:127.0.0.1:37421`
+
+This guide does not yet include a full Windows service-install walkthrough.
+For now, use the published Windows daemon asset from the GitHub releases page
+and run it under your preferred process supervisor or a manual terminal session.
 
 Foreground manual run:
 
@@ -147,7 +154,7 @@ daemon supervision as separate lifecycle decisions.
 
 ### Daemon Lifecycle
 
-- Start it with `brew services`, `systemd --user`, `launchctl`, or a manual `libravdbd serve`.
+- Start it with `brew services`, `systemd --user`, `launchctl bootstrap`, or a manual `libravdbd serve`.
 - Restart it when you change daemon-level environment variables or replace the binary.
 - Stop it before uninstalling or deleting on-disk data.
 - Point the plugin at the correct endpoint with `sidecarPath` if you do not use the default location.

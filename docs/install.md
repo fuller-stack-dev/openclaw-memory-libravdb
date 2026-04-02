@@ -111,13 +111,15 @@ Linux user service from the repo template:
 mkdir -p ~/.local/bin ~/.config/systemd/user
 curl -L -o ~/.local/bin/libravdbd https://github.com/xDarkicex/openclaw-memory-libravdb/releases/download/vX.Y.Z/libravdbd-linux-amd64
 chmod +x ~/.local/bin/libravdbd
-cp packaging/systemd/libravdbd.service ~/.config/systemd/user/libravdbd.service
+curl -L -o ~/.config/systemd/user/libravdbd.service \
+  https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/packaging/systemd/libravdbd.service
 systemctl --user enable --now libravdbd.service
 ```
 
 macOS LaunchAgent from the repo template:
 
-1. Copy [`packaging/launchd/com.xdarkicex.libravdbd.plist`](../packaging/launchd/com.xdarkicex.libravdbd.plist).
+1. Download `com.xdarkicex.libravdbd.plist` from:
+   `https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/packaging/launchd/com.xdarkicex.libravdbd.plist`
 2. Replace `__HOME__` with your home directory.
 3. Save it to `~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`.
 4. Load it with `launchctl load ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`.

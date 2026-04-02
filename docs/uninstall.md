@@ -87,8 +87,11 @@ Common local state:
 - socket directory: `~/.clawdb/run/`
 - database file: `~/.clawdb/data.libravdb`
 
-If you configured a custom `sidecarPath` or `dbPath`, remove those custom
-locations instead of the defaults.
+If you configured a custom Unix socket endpoint in `sidecarPath`, remove that
+socket path or containing directory if applicable. If you configured `dbPath`,
+remove that custom database location instead of the default path. TCP
+`sidecarPath` endpoints are not filesystem paths and do not have anything to
+delete during uninstall.
 
 ## 5. Post-Uninstall Check
 

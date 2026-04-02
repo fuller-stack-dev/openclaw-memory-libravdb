@@ -14,14 +14,16 @@ interface HybridOptions {
 
 export function scoreCandidates(items: SearchResult[], opts: HybridOptions): SearchResult[] {
   const now = Date.now();
-  const alpha = opts.alpha ?? 0.7;
-  const beta = opts.beta ?? 0.2;
-  const gamma = opts.gamma ?? 0.1;
-  const delta = opts.delta ?? 0.5;
+  const { alpha, beta, gamma } = normalizeWeights(
+    opts.alpha ?? 0.7,
+    opts.beta ?? 0.2,
+    opts.gamma ?? 0.1,
+  );
+  const delta = clamp01(opts.delta ?? 0.5);
   // Lambda units are per-second decay constants.
-  const recencyLambdaSession = opts.recencyLambdaSession ?? 0.0001;
-  const recencyLambdaUser = opts.recencyLambdaUser ?? 0.00001;
-  const recencyLambdaGlobal = opts.recencyLambdaGlobal ?? 0.000002;
+  const recencyLambdaSession = Math.max(0, opts.recencyLambdaSession ?? 0.0001);
+  const recencyLambdaUser = Math.max(0, opts.recencyLambdaUser ?? 0.00001);
+  const recencyLambdaGlobal = Math.max(0, opts.recencyLambdaGlobal ?? 0.000002);
 
   return items
     .map((item) => {
@@ -36,8 +38,9 @@ export function scoreCandidates(items: SearchResult[], opts: HybridOptions): Sea
         item.metadata.sessionId === opts.sessionId ? 1.0
           : item.metadata.userId === opts.userId ? 0.6
             : 0.3;
+      const similarity = clamp01(item.score);
       const baseScore =
-        alpha * item.score +
+        alpha * similarity +
         beta * recency +
         gamma * scopeBoost;
       const rawDecayRate =
@@ -47,7 +50,7 @@ export function scoreCandidates(items: SearchResult[], opts: HybridOptions): Sea
         item.metadata.type === "summary"
           ? 1.0 - delta * decayRate
           : 1.0;
-      const finalScore = baseScore * quality;
+      const finalScore = clamp01(baseScore * quality);
 
       return {
         ...item,
@@ -55,4 +58,25 @@ export function scoreCandidates(items: SearchResult[], opts: HybridOptions): Sea
       };
     })
     .sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0));
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function normalizeWeights(alpha: number, beta: number, gamma: number): { alpha: number; beta: number; gamma: number } {
+  alpha = clamp01(alpha);
+  beta = clamp01(beta);
+  gamma = clamp01(gamma);
+
+  const sum = alpha + beta + gamma;
+  if (sum <= 0) {
+    return { alpha: 0.7, beta: 0.2, gamma: 0.1 };
+  }
+
+  return {
+    alpha: alpha / sum,
+    beta: beta / sum,
+    gamma: gamma / sum,
+  };
 }

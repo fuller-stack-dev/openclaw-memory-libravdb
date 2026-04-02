@@ -13,14 +13,19 @@ import (
 
 	libravdb "github.com/xDarkicex/libravdb/libravdb"
 
+	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/astv2"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/embed"
 )
 
 const (
-	dirtyTierCollection = "_tier_dirty"
-	dirtyTierDims       = 1
-	maxCollections      = 10000
-	rawStoreCap         = 4096
+	dirtyTierCollection       = "_tier_dirty"
+	AuthoredHardCollection    = "authored:hard"
+	AuthoredSoftCollection    = "authored:soft"
+	AuthoredVariantCollection = "authored:variant"
+	dirtyTierDims             = 1
+	authoredTierDims          = 1
+	maxCollections            = 10000
+	rawStoreCap               = 4096
 )
 
 type SearchResult struct {
@@ -118,6 +123,56 @@ func (s *Store) InsertText(ctx context.Context, collection, id, text string, met
 
 func (s *Store) InsertRecord(ctx context.Context, collection, id string, vec []float32, meta map[string]any) error {
 	return s.insertRecord(ctx, collection, id, "", vec, meta)
+}
+
+func (s *Store) PersistAuthoredDocument(ctx context.Context, doc astv2.Document, coreDoc bool) error {
+	if doc.SourceDoc == "" {
+		return errors.New("authored source doc is required")
+	}
+
+	if err := s.EnsureAuthoredCollections(ctx); err != nil {
+		return err
+	}
+	if err := s.deleteAuthoredSourceDoc(ctx, doc.SourceDoc); err != nil {
+		return err
+	}
+
+	for _, node := range doc.Nodes {
+		collection := authoredCollectionForTier(node.Tier)
+		if collection == "" {
+			return fmt.Errorf("unknown authored tier %d for %s/%d", node.Tier, doc.SourceDoc, node.Ordinal)
+		}
+
+		meta := authoredMetadata(doc, node, coreDoc)
+		id := authoredRecordID(doc.SourceDoc, node.Ordinal)
+		switch node.Tier {
+		case astv2.TierHard, astv2.TierSoft:
+			if err := s.insertRecord(ctx, collection, id, node.Text, []float32{0}, meta); err != nil {
+				return err
+			}
+		case astv2.TierVariant:
+			if err := s.InsertText(ctx, collection, id, node.Text, meta); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported authored tier %d", node.Tier)
+		}
+	}
+
+	return nil
+}
+
+func (s *Store) EnsureAuthoredCollections(ctx context.Context) error {
+	for _, collection := range []string{
+		AuthoredHardCollection,
+		AuthoredSoftCollection,
+		AuthoredVariantCollection,
+	} {
+		if err := s.EnsureCollection(ctx, collection); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) insertRecord(ctx context.Context, collection, id, text string, vec []float32, meta map[string]any) error {
@@ -489,7 +544,7 @@ func (s *Store) ensureCollection(ctx context.Context, collection string, dims in
 		libravdb.WithDimension(dims),
 		libravdb.WithMetric(libravdb.CosineDistance),
 	}
-	if collection == dirtyTierCollection {
+	if collection == dirtyTierCollection || collection == AuthoredHardCollection || collection == AuthoredSoftCollection {
 		opts = append(opts, libravdb.WithFlat())
 	} else {
 		opts = append(opts, libravdb.WithAutoIndexSelection(true), libravdb.WithRawVectorStoreSlabby(rawStoreCap))
@@ -518,6 +573,8 @@ func (s *Store) collectionDimensions(collection string, vec []float32, meta map[
 		return embed.DimsL1
 	case strings.HasSuffix(collection, ":256d"):
 		return embed.DimsL2
+	case collection == AuthoredHardCollection, collection == AuthoredSoftCollection:
+		return authoredTierDims
 	case collection == dirtyTierCollection:
 		return dirtyTierDims
 	default:
@@ -582,6 +639,68 @@ func best(hits []SearchResult) float64 {
 		return 0
 	}
 	return hits[0].Score
+}
+
+func authoredCollectionForTier(tier astv2.Tier) string {
+	switch tier {
+	case astv2.TierHard:
+		return AuthoredHardCollection
+	case astv2.TierSoft:
+		return AuthoredSoftCollection
+	case astv2.TierVariant:
+		return AuthoredVariantCollection
+	default:
+		return ""
+	}
+}
+
+func authoredRecordID(sourceDoc string, ordinal int) string {
+	return fmt.Sprintf("%s#%06d", sourceDoc, ordinal)
+}
+
+func authoredMetadata(doc astv2.Document, node astv2.Node, coreDoc bool) map[string]any {
+	authority := 0.0
+	if coreDoc {
+		authority = 1.0
+	}
+	return map[string]any{
+		"source_doc":     doc.SourceDoc,
+		"tokenizer_id":   doc.TokenizerID,
+		"cache_key":      doc.CacheKey,
+		"node_kind":      string(node.Kind),
+		"ordinal":        node.Ordinal,
+		"tier":           int(node.Tier),
+		"authority":      authority,
+		"token_estimate": node.TokenEstimate,
+		"promoted":       node.Promoted,
+		"modality_mask":  int(node.ModalityMask),
+		"authored":       true,
+		"is_core_doc":    coreDoc,
+	}
+}
+
+func (s *Store) deleteAuthoredSourceDoc(ctx context.Context, sourceDoc string) error {
+	for _, collection := range []string{
+		AuthoredHardCollection,
+		AuthoredSoftCollection,
+		AuthoredVariantCollection,
+	} {
+		records, err := s.ListByMeta(ctx, collection, "source_doc", sourceDoc)
+		if err != nil {
+			return err
+		}
+		if len(records) == 0 {
+			continue
+		}
+		ids := make([]string, 0, len(records))
+		for _, record := range records {
+			ids = append(ids, record.ID)
+		}
+		if err := s.DeleteBatch(ctx, collection, ids); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) checkEmbeddingFingerprint() error {

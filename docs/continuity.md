@@ -13,12 +13,14 @@ $$
 Instead, continuity is modeled as the composition of:
 
 $$
-C_{\mathrm{total}}(q)=\mathcal{I}\cup T_{\mathrm{recent}}\cup \mathrm{Proj}(\mathcal{V}_{\mathrm{rest}}, q)
+C_{\mathrm{total}}(q)=\mathcal{I}_1\cup \mathcal{I}_2^{*}\cup T_{\mathrm{recent}}\cup \mathrm{Proj}(\mathcal{V}_{\mathrm{rest}}, q)
 $$
 
 where:
 
-- $\mathcal{I}$ is the invariant authored context from
+- $\mathcal{I}_1$ is the hard authored invariant context from
+  [`ast-v2.md`](./ast-v2.md)
+- $\mathcal{I}_2^{*}$ is the admitted soft-invariant prefix from
   [`ast-v2.md`](./ast-v2.md)
 - $T_{\mathrm{recent}}$ is a preserved raw recent session tail
 - $\mathrm{Proj}(\mathcal{V}_{\mathrm{rest}}, q)$ is the scored retrieval
@@ -46,16 +48,22 @@ even when summary quality is imperfect.
 Let the full retrievable corpus be partitioned as:
 
 $$
-\mathbf{D}=\mathcal{I}\cup\mathcal{V},
+\mathbf{D}=\mathcal{I}_1\cup\mathcal{I}_2\cup\mathcal{V},
 \qquad
-\mathcal{I}\cap\mathcal{V}=\emptyset
+\mathcal{I}_1\cap\mathcal{I}_2=\mathcal{I}_1\cap\mathcal{V}=\mathcal{I}_2\cap\mathcal{V}=\emptyset
 $$
 
 Following [`ast-v2.md`](./ast-v2.md), invariant authored directives are injected for
 all queries:
 
 $$
-d\in\mathcal{I} \Rightarrow G(q,d)=1
+d\in\mathcal{I}_1 \Rightarrow G(q,d)=1
+$$
+
+Soft authored directives are injected by position-preserving prefix selection:
+
+$$
+\mathcal{I}_2^{*}=\mathrm{Pref}(\mathcal{I}_2;\,\tau_{\mathcal{I}_2}^{\mathrm{eff}})
 $$
 
 We further partition the session-derived variant corpus into:
@@ -72,12 +80,13 @@ preserved verbatim and excluded from destructive compaction.
 The final injected context becomes:
 
 $$
-C_{\mathrm{total}}(q)=\mathcal{I}\cup T_{\mathrm{recent}}\cup \mathrm{Proj}(\mathcal{V}_{\mathrm{rest}}, q)
+C_{\mathrm{total}}(q)=\mathcal{I}_1\cup \mathcal{I}_2^{*}\cup T_{\mathrm{recent}}\cup \mathrm{Proj}(\mathcal{V}_{\mathrm{rest}}, q)
 $$
 
 This means continuity is guaranteed jointly by:
 
-- authored invariants
+- hard authored invariants
+- admitted soft authored invariants
 - preserved recent raw context
 - scored retrieval over the older compacted/searchable corpus
 
@@ -153,21 +162,58 @@ artifact bundle intact.
 Let the total prompt budget be $\tau$. Then the continuity-aware allocation is:
 
 $$
-\tau = \tau_{\mathcal{I}} + \tau_{\mathrm{tail}} + \tau_{\mathcal{V}}
+\tau = \tau_{\mathcal{I}_1} + \tau_{\mathcal{I}_2}^{*} + \tau_{\mathrm{tail}} + \tau_{\mathcal{V}}
 $$
 
 equivalently:
 
 $$
-\tau_{\mathcal{V}} = \tau - \tau_{\mathcal{I}} - \tau_{\mathrm{tail}}
+\tau_{\mathcal{V}} = \tau - \tau_{\mathcal{I}_1} - \tau_{\mathcal{I}_2}^{*} - \tau_{\mathrm{tail}}
 $$
 
 with:
 
-- $\tau_{\mathcal{I}}$ reserved for invariant authored context
+- $\tau_{\mathcal{I}_1}$ consumed by hard authored context
+- $\tau_{\mathcal{I}_2}^{*}$ consumed by the admitted soft-invariant prefix
 - $\tau_{\mathrm{tail}}$ reserved for preserved recent raw context
 - $\tau_{\mathcal{V}}$ reserved for scored retrieval over
   $\mathcal{V}_{\mathrm{rest}}$
+
+Following the unified contract in [`mathematics-v2.md`](./mathematics-v2.md),
+let the reserve fractions satisfy:
+
+$$
+\alpha_1,\alpha_2,\beta\in[0,1],
+\qquad
+\alpha_1+\alpha_2+\beta\le 1
+$$
+
+with:
+
+$$
+\tau_{\mathcal{I}_1}\le \alpha_1\tau
+\qquad\text{and}\qquad
+\tau_{\mathrm{tail}}^{\mathrm{target}}=\beta\tau
+$$
+
+The soft authored tier is then bounded by:
+
+$$
+\tau_{\mathcal{I}_2}^{\mathrm{eff}}
+=
+\min\!\left(
+\alpha_2\tau,\,
+\tau-\tau_{\mathcal{I}_1}-\sum_{d\in T_{\mathrm{base}}}\mathrm{toks}(d)
+\right)
+$$
+
+This enforces the intended precedence:
+
+1. hard authored invariants
+2. the mandatory recent-tail base suffix
+3. the soft-invariant prefix
+4. additional tail extension up to the target tail budget
+5. residual variant retrieval
 
 The residual budget must satisfy:
 
@@ -178,7 +224,7 @@ $$
 Startup and runtime must preserve:
 
 $$
-\tau_{\mathcal{I}} + \tau_{\mathrm{tail}} \le \tau
+\tau_{\mathcal{I}_1} + \sum_{d\in T_{\mathrm{base}}}\mathrm{toks}(d) \le \tau
 $$
 
 and:
@@ -188,8 +234,9 @@ $$
 $$
 
 The retrieval system may truncate only $\mathrm{Proj}(\mathcal{V}_{\mathrm{rest}}, q)$.
-It must not truncate $\mathcal{I}$, and it must not silently compact away
-$T_{\mathrm{recent}}$.
+It must not truncate $\mathcal{I}_1$, and it must not silently compact away
+$T_{\mathrm{recent}}$. The soft authored tier may be truncated only by
+position-preserving prefix selection.
 
 ## 5. Compaction Boundary Invariant
 

@@ -111,6 +111,24 @@ func CompactSession(
 			continue
 		}
 
+		if len(group.turns) == 1 {
+			summary := trivialSummary(group.turns[0])
+			metadata := summaryMetadata(sessionID, now, summary, group.turns, qualityMetadata{})
+			summaryID := summaryRecordID(sessionID, summary.SourceIDs)
+			if err := st.InsertText(ctx, collection, summaryID, summary.Text, metadata); err != nil {
+				return Result{}, fmt.Errorf("summary insert failed, source turns preserved: %w", err)
+			}
+			if err := st.DeleteBatch(ctx, collection, summary.SourceIDs); err != nil {
+				log.Printf("compaction: summary %s inserted but source delete failed: %v", summaryID, err)
+			} else {
+				out.TurnsRemoved += len(summary.SourceIDs)
+			}
+			totalConfidence += summary.Confidence
+			out.SummaryMethod = mergeMethod(out.SummaryMethod, summary.Method)
+			log.Printf("compaction: cluster_id=%d mean_gating_score=%.3f summarizer_used=%s", idx, meanGatingScore(group.turns), summary.Method)
+			continue
+		}
+
 		summaryTurns := make([]summarize.Turn, 0, len(group.turns))
 		sourceIDs := make([]string, 0, len(group.turns))
 		for _, turn := range group.turns {
@@ -248,6 +266,16 @@ func normalizedTargetSize(targetSize int) int {
 		return DefaultTargetSize
 	}
 	return targetSize
+}
+
+func trivialSummary(turn turnRecord) summarize.Summary {
+	return summarize.Summary{
+		Text:       strings.TrimSpace(turn.text),
+		SourceIDs:  []string{turn.id},
+		Method:     "trivial",
+		TokenCount: len(strings.Fields(turn.text)),
+		Confidence: 1.0,
+	}
 }
 
 func eligibleTurns(results []store.SearchResult) []turnRecord {

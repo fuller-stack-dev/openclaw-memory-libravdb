@@ -6,6 +6,7 @@ require (
 	github.com/sugarme/tokenizer v0.3.0
 	github.com/xDarkicex/libravdb v0.0.0
 	github.com/yalue/onnxruntime_go v1.21.0
+	github.com/yuin/goldmark v1.7.13
 )
 
 require (

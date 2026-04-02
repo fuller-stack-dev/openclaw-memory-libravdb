@@ -405,6 +405,41 @@ func TestCompactSessionFallsBackToExtractiveWhenAbstractiveFailsPreservationGate
 	}
 }
 
+func TestCompactSessionTagsSingleMemberClustersAsTrivial(t *testing.T) {
+	st := &fakeStore{
+		results: []store.SearchResult{
+			{ID: "a", Text: "alpha", Metadata: map[string]any{"sessionId": "s1", "ts": int64(10)}},
+			{ID: "b", Text: "beta", Metadata: map[string]any{"sessionId": "s1", "ts": int64(20)}},
+			{ID: "c", Text: "gamma", Metadata: map[string]any{"sessionId": "s1", "ts": int64(30)}},
+		},
+	}
+	sum := &fakeSummarizer{
+		summaries: []summarize.Summary{
+			{Text: "summary-1", SourceIDs: []string{"a", "b"}, Method: "extractive", TokenCount: 2, Confidence: 0.8},
+		},
+	}
+
+	got, err := CompactSession(context.Background(), st, sum, nil, "s1", true, 2)
+	if err != nil {
+		t.Fatalf("CompactSession() error = %v", err)
+	}
+	if !got.DidCompact {
+		t.Fatalf("expected compaction, got %+v", got)
+	}
+	if len(st.insertCalls) != 2 {
+		t.Fatalf("expected two summary inserts, got %d", len(st.insertCalls))
+	}
+	if st.insertCalls[1].meta["method"] != "trivial" {
+		t.Fatalf("expected trivial method for single-member cluster, got %+v", st.insertCalls[1].meta["method"])
+	}
+	if st.insertCalls[1].text != "gamma" {
+		t.Fatalf("expected trivial summary to preserve raw text, got %q", st.insertCalls[1].text)
+	}
+	if len(sum.calls) != 1 {
+		t.Fatalf("expected only one real summarizer call for the non-trivial cluster, got %d", len(sum.calls))
+	}
+}
+
 func TestEvaluatePreservationMetricsAverageAlignmentAndCoverage(t *testing.T) {
 	embedder := fakeEmbedder{
 		vectors: map[string][]float32{

@@ -81,15 +81,18 @@ The current implementation defaults are:
 - $\gamma = 0.1$
 - $\delta = 0.5$
 
-The design convention is that $\alpha + \beta + \gamma = 1$. This keeps the
+The runtime enforces this convex-mixture contract by clamping weights into
+$[0,1]$ and re-normalizing them onto a unit sum before scoring. This keeps the
 base score on a stable scale and makes tuning interpretable: increasing one
 weight means explicitly decreasing another.
 
 **Note on retrieval similarity.** The term $\cos(q,d) \in [0,1]$ represents the
-similarity score as bounded and returned by the host retrieval layer. The planned
-two-pass system in Section 7 uses raw cosine similarity spanning $[-1,1]$ with
-negatives clipped explicitly. These are described separately to avoid conflating
-current implementation with planned architecture.
+similarity score as bounded at the host ranking boundary. If the retrieval layer
+surfaces a negative cosine-style score, the host clamps it to $0$ before applying
+the section-1 hybrid ranker. The planned two-pass system in Section 7 uses raw
+cosine similarity spanning $[-1,1]$ with negatives clipped explicitly. These are
+described separately to avoid conflating current implementation with planned
+architecture.
 
 ### 1.1 Domain Constraints
 
@@ -386,10 +389,13 @@ partitioning:
 1. collect eligible non-summary turns
 2. sort them by `(ts, id)`
 3. choose target cluster size $k$
-4. derive cluster count:
+4. normalize the requested target cluster size:
 
-**Precondition:** the target cluster size must satisfy $k \ge 1$. The case
-$k = 0$ is undefined and must cause startup or configuration validation failure.
+Non-positive runtime inputs are normalized to the shipped default
+$k = 20$ before clustering. After normalization, the effective target size must
+satisfy $k \ge 1$.
+
+5. derive cluster count:
 
 Let $n$ be the number of eligible turns. The cluster count is:
 
@@ -397,7 +403,7 @@ $$
 c = \left\lceil \frac{\max(n,\,1)}{k} \right\rceil
 $$
 
-5. assign turn $i$ to cluster:
+6. assign turn $i$ to cluster:
 
 $$
 \mathrm{clusterIndex}(i) = \left\lfloor \frac{i \cdot c}{\max(n,\,1)} \right\rfloor
@@ -658,49 +664,92 @@ and determines whether a document is injected for a query.
 
 ### 7.2 Corpus Decomposition
 
-The corpus is partitioned into invariant and variant sets:
+The reviewed AST partitioning model in [`ast-v2.md`](./ast-v2.md) refines the
+older binary invariant-or-variant split into three authored tiers plus a
+continuity carve-out inside the retrievable variant corpus.
+
+The authored corpus is partitioned into hard invariants, soft invariants, and
+variant memory:
 
 $$
-\mathbf{D} = \mathcal{I}\cup\mathcal{V},
+\mathbf{D} = \mathcal{I}_1\cup\mathcal{I}_2\cup\mathcal{V},
 \qquad
-\mathcal{I}\cap\mathcal{V}=\emptyset
+\mathcal{I}_1\cap\mathcal{I}_2=\mathcal{I}_1\cap\mathcal{V}=\mathcal{I}_2\cap\mathcal{V}=\emptyset
 $$
 
-The invariant membership predicate is:
+The tier membership predicate is:
 
 $$
-\iota : \mathbf{D}\rightarrow \{0,1\}
+\iota : \mathbf{D}\rightarrow \{0,1,2\}
 $$
 
 with:
 
 $$
-\mathcal{I} = \{d\in\mathbf{D}\mid \iota(d)=1\}
+\mathcal{I}_1 = \{d\in\mathbf{D}\mid \iota(d)=1\}
 $$
 
 and:
 
 $$
-\mathcal{V} = \mathbf{D}\setminus\mathcal{I}
+\mathcal{I}_2 = \{d\in\mathbf{D}\mid \iota(d)=2\}
+\qquad
+\mathcal{V} = \{d\in\mathbf{D}\mid \iota(d)=0\}
 $$
 
-For OpenClaw, the intended implementation is that invariant documents are
-registered as authored constants at load time rather than discovered at query
-time. In practice, this means documents such as `AGENTS.md` and `souls.md`
-should be compiled into the invariant set when they are explicitly marked as
-always-inject rules.
+Here:
 
-The required invariant is:
+- $\mathcal{I}_1$ is the hard invariant set, injected exactly and never
+  truncated
+- $\mathcal{I}_2$ is the soft invariant sequence, injected by longest-prefix
+  truncation in authored order
+- $\mathcal{V}$ is the retrievable variant corpus
+
+For OpenClaw, the intended implementation is that authored documents such as
+`AGENTS.md` and `souls.md` are compiled into $\mathcal{I}_1$, $\mathcal{I}_2$,
+and $\mathcal{V}$ at load time rather than discovered monolithically at query
+time.
+
+The hard authored guarantee is:
 
 $$
 \iota(d)=1 \Rightarrow G(q,d)=1 \qquad \forall q\in\mathbf{Q}
 $$
 
-This is a compile-time guarantee, not a runtime heuristic.
+Soft invariants are also authored constants, but unlike $\mathcal{I}_1$ they
+are budget-elastic. Let the authored order on $\mathcal{I}_2$ be:
+
+$$
+\mathcal{I}_2=\langle d^{(2)}_1,d^{(2)}_2,\dots,d^{(2)}_m\rangle
+$$
+
+and define the longest-prefix operator:
+
+$$
+\mathrm{Pref}(\mathcal{I}_2;\,b)=\langle d^{(2)}_1,\dots,d^{(2)}_j\rangle
+$$
+
+where:
+
+$$
+j=\max\left\{r\in\{0,\dots,m\}\ \middle|\ \sum_{i=1}^{r}\mathrm{toks}(d^{(2)}_i)\le b\right\}
+$$
+
+When continuity is enabled, the runtime further refines the variant corpus into
+an exact recent raw suffix and the remaining retrievable variant set:
+
+$$
+\mathcal{V}=T_{\mathrm{recent}}\cup\mathcal{V}_{\mathrm{rest}},
+\qquad
+T_{\mathrm{recent}}\cap\mathcal{V}_{\mathrm{rest}}=\emptyset
+$$
+
+Only $\mathcal{V}_{\mathrm{rest}}$ participates in semantic retrieval. The
+recent tail is preserved exactly and budgeted separately.
 
 ### 7.3 Document Authority Weight
 
-Each variant document carries a precomputed authority weight:
+Each retrievable variant document carries a precomputed authority weight:
 
 $$
 \omega(d)=\alpha_r\cdot r(d)+\alpha_f\cdot f(d)+\alpha_a\cdot a(d)
@@ -719,7 +768,7 @@ r(d)=\exp\!\left(-\lambda_r\cdot \Delta t(d)\right)
 $$
 
 $$
-f(d)=\frac{\log(1+\mathrm{acc}(d))}{\log\!\left(1+\max_{d'\in\mathcal{V}}\mathrm{acc}(d')+1\right)}
+f(d)=\frac{\log(1+\mathrm{acc}(d))}{\log\!\left(1+\max_{d'\in\mathcal{V}_{\mathrm{rest}}}\mathrm{acc}(d')+1\right)}
 $$
 
 $$
@@ -733,11 +782,11 @@ The $+1$ in the denominator of $f(d)$, but not the numerator, implements minimal
 additive smoothing that guarantees a defined value at cold start. The asymmetry
 is deliberate: a document with zero accesses should score $f(d) = 0$ exactly,
 which the unsmoothed numerator preserves. When
-$\max_{d'\in\mathcal{V}}\mathrm{acc}(d') = 0$, the denominator equals $\log 2$
+$\max_{d'\in\mathcal{V}_{\mathrm{rest}}}\mathrm{acc}(d') = 0$, the denominator equals $\log 2$
 and:
 
 $$
-f(d) = 0 \qquad \forall d\in\mathcal{V}
+f(d) = 0 \qquad \forall d\in\mathcal{V}_{\mathrm{rest}}
 $$
 
 cleanly deferring frequency weight to $r(d)$ and $a(d)$ until access history
@@ -750,8 +799,10 @@ $$
 \omega(d)\in[0,1]
 $$
 
-This lets the planned discovery score incorporate recency, access frequency,
-and authored authority without baking those concerns into the raw cosine term.
+For variant nodes extracted from core authored identity documents,
+[`ast-v2.md`](./ast-v2.md) sets $a(d)=1.0$. This lets the planned discovery
+score incorporate recency, access frequency, and authored authority without
+baking those concerns into the raw cosine term.
 
 ### 7.4 Pass 1: Coarse Semantic Filtering
 
@@ -764,7 +815,7 @@ $$
 The raw top-$k_1$ candidate set is:
 
 $$
-\mathcal{C}_1^{\mathrm{raw}}(q)=\mathrm{TopK}_{d\in\mathcal{V}}\!\left(k_1,\,\mathrm{sim}(q,d)\right)
+\mathcal{C}_1^{\mathrm{raw}}(q)=\mathrm{TopK}_{d\in\mathcal{V}_{\mathrm{rest}}}\!\left(k_1,\,\mathrm{sim}(q,d)\right)
 $$
 
 with filtered coarse set:
@@ -931,39 +982,116 @@ $$
 Variant projection is:
 
 $$
-\mathrm{Proj}(\mathcal{V},\, q)=\mathcal{C}_2(q)\cup\mathcal{C}_{hop}^{*}(q)
+\mathrm{Proj}(\mathcal{V}_{\mathrm{rest}},\, q)=\mathcal{C}_2(q)\cup\mathcal{C}_{hop}^{*}(q)
 $$
 
-Total injected soul context is:
+The final injected context is:
 
 $$
-C_{soul}(q)=\mathcal{I}\cup \mathrm{Proj}(\mathcal{V},\, q)
+C_{\mathrm{total}}(q)=\mathcal{I}_1\cup \mathcal{I}_2^{*}\cup T_{\mathrm{recent}}\cup \mathrm{Proj}(\mathcal{V}_{\mathrm{rest}},\, q)
 $$
 
-Let the total prompt budget be $\tau$. If the invariant set consumes:
+Let the total prompt budget be $\tau$, and let the reserve fractions satisfy:
 
 $$
-\tau_{\mathcal{I}}=\sum_{d\in\mathcal{I}} \mathrm{toks}(d)
+\alpha_1,\alpha_2,\beta\in[0,1],
+\qquad
+\alpha_1+\alpha_2+\beta\le 1
 $$
 
-then the variant budget is:
+where:
+
+- $\alpha_1$ reserves hard authored budget
+- $\alpha_2$ reserves soft authored budget
+- $\beta$ is the target recent-tail budget fraction
+
+Define the hard authored token mass:
 
 $$
-\tau_{\mathcal{V}}=\tau-\tau_{\mathcal{I}}
+\tau_{\mathcal{I}_1}=\sum_{d\in\mathcal{I}_1}\mathrm{toks}(d)
 $$
 
-**Required startup invariant:**
+**Required startup hard authored invariant:**
 
 $$
-\tau_{\mathcal{I}} \le \tau
+\tau_{\mathcal{I}_1}\le \alpha_1\tau
 $$
 
 This must be enforced at startup or configuration validation time. If violated,
-the system cannot simultaneously satisfy "the invariant set is never truncated"
-and "total injected tokens do not exceed the total budget." Initialization must
-fail or the deployment must be reconfigured.
+the system cannot simultaneously satisfy "the hard invariant set is never
+truncated" and "total injected tokens do not exceed the total budget."
+Initialization must fail or the deployment must be reconfigured.
 
-Documents in $\mathrm{Proj}(\mathcal{V}, q)$ are injected in descending
+Let $T_{\mathrm{base}}$ be the mandatory recent-tail base suffix defined in
+[`continuity.md`](./continuity.md): the shortest raw suffix of the active
+session containing at least the most recent $m$ turns. The mandatory continuity
+fit requirement is:
+
+$$
+\tau_{\mathcal{I}_1} + \sum_{d\in T_{\mathrm{base}}}\mathrm{toks}(d)\le \tau
+$$
+
+Otherwise no legal assembly exists that preserves both hard invariants and the
+minimum continuity tail. The runtime must surface degraded mode explicitly; it
+must not silently truncate $\mathcal{I}_1$ or split the mandatory recent tail.
+
+The effective soft authored budget is:
+
+$$
+\tau_{\mathcal{I}_2}^{\mathrm{eff}}
+=
+\min\!\left(
+\alpha_2\tau,\,
+\tau-\tau_{\mathcal{I}_1}-\sum_{d\in T_{\mathrm{base}}}\mathrm{toks}(d)
+\right)
+$$
+
+and the injected soft invariant prefix is:
+
+$$
+\mathcal{I}_2^{*}=\mathrm{Pref}(\mathcal{I}_2;\,\tau_{\mathcal{I}_2}^{\mathrm{eff}})
+$$
+
+Define the recent-tail target:
+
+$$
+\tau_{\mathrm{tail}}^{\mathrm{target}}=\beta\tau
+$$
+
+The exact recent-tail selector is the longest bundle-safe raw suffix containing
+$T_{\mathrm{base}}$ and satisfying:
+
+$$
+\sum_{d\in T_{\mathrm{recent}}}\mathrm{toks}(d)
+\le
+\min\!\left(
+\max\!\left(\tau_{\mathrm{tail}}^{\mathrm{target}},\,
+\sum_{d\in T_{\mathrm{base}}}\mathrm{toks}(d)\right),\,
+\tau-\tau_{\mathcal{I}_1}-\sum_{d\in\mathcal{I}_2^{*}}\mathrm{toks}(d)
+\right)
+$$
+
+This preserves the continuity rule that the mandatory recent suffix wins over
+the nominal tail target when they conflict, while still respecting the total
+prompt budget.
+
+The residual retrievable variant budget is:
+
+$$
+\tau_{\mathcal{V}}(q)
+=
+\tau-\tau_{\mathcal{I}_1}
+-\sum_{d\in\mathcal{I}_2^{*}}\mathrm{toks}(d)
+-\sum_{d\in T_{\mathrm{recent}}}\mathrm{toks}(d)
+$$
+
+which must satisfy:
+
+$$
+\tau_{\mathcal{V}}(q)\ge 0
+$$
+
+Documents in $\mathrm{Proj}(\mathcal{V}_{\mathrm{rest}}, q)$ are injected in descending
 score order until:
 
 $$
@@ -985,8 +1113,8 @@ $$
 $$
 G(q,d)=
 \begin{cases}
-1 & \text{if } \iota(d)=1 \\
-\mathbf{1}[d\in\mathcal{C}_2(q)\cup\mathcal{C}_{hop}^{*}(q)] & \text{if } \iota(d)=0
+1 & \text{if } d\in\mathcal{I}_1\cup\mathcal{I}_2^{*}\cup T_{\mathrm{recent}} \\
+\mathbf{1}[d\in\mathcal{C}_2(q)\cup\mathcal{C}_{hop}^{*}(q)] & \text{if } d\in\mathcal{V}_{\mathrm{rest}}
 \end{cases}
 $$
 
@@ -997,36 +1125,55 @@ The implementation must preserve these properties:
 1. Invariant completeness:
 
 $$
-\forall d\in\mathcal{I},\; \forall q\in\mathbf{Q}: d\in C_{soul}(q)
+\forall d\in\mathcal{I}_1,\; \forall q\in\mathbf{Q}: d\in C_{\mathrm{total}}(q)
 $$
 
-2. Partition integrity:
+2. Soft invariant order preservation:
 
 $$
-\mathcal{I}\cap\mathcal{V}=\emptyset
+\mathcal{I}_2^{*}\text{ is a prefix of }\mathcal{I}_2
 $$
 
-3. Score boundedness:
+3. Partition integrity:
+
+$$
+\mathcal{I}_1\cap\mathcal{I}_2=\mathcal{I}_1\cap\mathcal{V}=\mathcal{I}_2\cap\mathcal{V}=\emptyset,
+\qquad
+T_{\mathrm{recent}}\cap\mathcal{V}_{\mathrm{rest}}=\emptyset
+$$
+
+4. Mandatory recent-tail completeness:
+
+$$
+T_{\mathrm{base}}\subseteq T_{\mathrm{recent}}
+$$
+
+5. Score boundedness:
 
 $$
 S_{final}(d)\in[0,1]
 $$
 
-4. Token budget respect:
+6. Token budget respect:
 
 $$
-\sum_{d\in C_{soul}(q)} \mathrm{toks}(d)\le\tau
+\sum_{d\in C_{\mathrm{total}}(q)} \mathrm{toks}(d)\le\tau
 $$
 
-with the invariant set never truncated, which is satisfiable only because the
-startup invariant $\tau_{\mathcal{I}}\le\tau$ is required.
+with $\mathcal{I}_1$ never truncated, $\mathcal{I}_2$ truncated only by
+longest-prefix selection, and the recent-tail base never silently dropped.
 
-5. Hop termination:
+7. Compaction boundary safety:
+
+Compaction may operate only on $\mathcal{V}_{\mathrm{rest}}$, never on
+$T_{\mathrm{recent}}$.
+
+8. Hop termination:
 
 The authored hop graph should be acyclic, or the runtime must cap hop depth at
 one to guarantee termination.
 
-6. Edge-case safety:
+9. Edge-case safety:
 
 No valid input in the declared domain may produce a NaN, a negative score, or a
 division-by-zero. This includes at minimum:
@@ -1036,6 +1183,8 @@ division-by-zero. This includes at minimum:
 - zero eligible clustering turns with $n=0$
 - near-zero-norm Matryoshka prefix vectors
 - empty hop neighborhoods
+- empty or zero-residual $\tau_{\mathcal{V}}(q)$ after invariant and
+  continuity reservation
 
 7. Quality multiplier boundedness:
 

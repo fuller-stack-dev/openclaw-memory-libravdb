@@ -20,6 +20,16 @@ test("fitPromptBudget keeps items within budget", () => {
   assert.equal(selected[0]?.id, "a");
 });
 
+test("fitPromptBudget preserves ranked prefix instead of skipping oversized items", () => {
+  const items: SearchResult[] = [
+    { id: "a", score: 1, text: "this item is definitely longer than short", metadata: {} },
+    { id: "b", score: 0.9, text: "tiny", metadata: {} },
+  ];
+
+  const selected = fitPromptBudget(items, 2);
+  assert.equal(selected.length, 0);
+});
+
 test("countTokens sums message contents", () => {
   const total = countTokens([{ content: "hello" }, { content: "world world" }]);
   assert.ok(total > 0);

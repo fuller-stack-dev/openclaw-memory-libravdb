@@ -12,7 +12,7 @@ export function fitPromptBudget(items: SearchResult[], budget: number): SearchRe
   for (const item of items) {
     const cost = estimateTokens(item.text);
     if (used + cost > budget) {
-      continue;
+      break;
     }
     selected.push(item);
     used += cost;

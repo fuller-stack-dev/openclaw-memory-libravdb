@@ -110,7 +110,49 @@ test("session recency decay uses seconds, not milliseconds", () => {
   });
 
   const expectedRecency = Math.exp(-0.0001 * 3600);
-  const expectedScore = 0.2 * expectedRecency + 0.1;
+  const expectedScore = (2 / 3) * expectedRecency + (1 / 3);
   assert.ok(Math.abs((ranked[0]?.finalScore ?? 0) - expectedScore) < 0.01);
   assert.ok((ranked[0]?.finalScore ?? 0) > 0.2);
+});
+
+test("scoreCandidates clamps negative retrieval scores to preserve [0,1] host math", () => {
+  const now = Date.now();
+  const ranked = scoreCandidates([
+    {
+      id: "negative-hit",
+      score: -0.8,
+      text: "negative similarity hit",
+      metadata: { ts: now, sessionId: "s1" },
+    },
+  ], {
+    alpha: 1,
+    beta: 0,
+    gamma: 0,
+    sessionId: "s1",
+    userId: "u1",
+  });
+
+  assert.equal(ranked[0]?.finalScore, 0);
+});
+
+test("scoreCandidates normalizes weights back onto the convex mixture", () => {
+  const now = Date.now();
+  const ranked = scoreCandidates([
+    {
+      id: "bounded-hit",
+      score: 1,
+      text: "bounded hit",
+      metadata: { ts: now, sessionId: "s1" },
+    },
+  ], {
+    alpha: 10,
+    beta: 10,
+    gamma: 10,
+    delta: 2,
+    sessionId: "s1",
+    userId: "u1",
+  });
+
+  assert.ok((ranked[0]?.finalScore ?? 0) <= 1);
+  assert.ok((ranked[0]?.finalScore ?? 0) >= 0);
 });

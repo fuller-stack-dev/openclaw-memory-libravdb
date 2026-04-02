@@ -92,6 +92,25 @@ For Soft Invariants (\(\alpha_2\)):
 \[ \sum_{n \in \mathcal{I}_{1d}} \mathrm{toks}(n) + \sum_{n \in \mathcal{I}_{2d}} \mathrm{toks}(n) \le \alpha_1 \tau + \alpha_2 \tau = (\alpha_1 + \alpha_2)\tau \le \alpha \tau \]
 This mathematically guarantees the overall token budget \(\tau\) is never breached by the combined invariant sets.
 
+Under the unified assembly contract in [`mathematics-v2.md`](./mathematics-v2.md)
+section 7.8 and [`continuity.md`](./continuity.md), these authored bounds are
+combined with a separate recent-tail target fraction \(\beta\). The runtime
+therefore treats the tiers with the following precedence:
+
+1. **Tier 1 / Hard invariants** must fit their startup reservation \(\alpha_1\tau\).
+2. **Mandatory recent tail** must preserve at least the minimum raw suffix \(T_{\mathrm{base}}\).
+3. **Tier 2 / Soft invariants** are injected by longest-prefix truncation under the effective budget
+   \[
+   \tau_{\mathcal{I}_2}^{\mathrm{eff}}=
+   \min\!\left(\alpha_2\tau,\,
+   \tau-\tau_{\mathcal{I}_1}-\mathrm{toks}(T_{\mathrm{base}})\right)
+   \]
+4. **Variant lore** competes only for the final residual budget after Tier 1,
+   the admitted Tier 2 prefix, and the exact recent tail are accounted for.
+
+This makes \(\mathcal{I}_1\) and the minimum continuity suffix hard
+constraints, while keeping \(\mathcal{I}_2\) order-preserving but elastic.
+
 ## 7. The Document-Addressed Cache (\(\Psi\)) and Runtime Implications
 
 The AST extraction, Deontic bigram evaluation, and partition logic are purely deterministic functions of \(d_{\mathrm{raw}}\). To prevent \(O(N)\) recomputation on every conversational turn, the system maintains a document-addressed cache:
@@ -102,5 +121,5 @@ Because the token estimator function \(\lceil \frac{|t|}{\chi(t)} \rceil\) depen
 
 At runtime:
 1. **Tier 1 (\(\mathcal{I}_{1d}\))** is injected via an \(O(1)\) memory copy.
-2. **Tier 2 (\(\mathcal{I}_{2d}\))** is evaluated via an \(O(|\mathcal{I}_{2d}|)\) prefix sum to enforce position truncation.
-3. **Tier 0 (\(\mathcal{V}_d\))** bypasses re-parsing and feeds directly into the semantic Pass 1 vector retrieval.
+2. **Tier 2 (\(\mathcal{I}_{2d}\))** is evaluated via an \(O(|\mathcal{I}_{2d}|)\) prefix sum to enforce position truncation under \(\tau_{\mathcal{I}_2}^{\mathrm{eff}}\).
+3. **Tier 0 (\(\mathcal{V}_d\))** bypasses re-parsing and feeds into the semantic Pass 1 vector retrieval only after the continuity layer removes the exact recent tail into \(T_{\mathrm{recent}}\), leaving \(\mathcal{V}_{\mathrm{rest}}\).

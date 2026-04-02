@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/astv2"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/embed"
 )
 
@@ -286,6 +287,122 @@ func TestInsertMatryoshkaL3IsSourceOfTruth(t *testing.T) {
 	}
 }
 
+func TestPersistAuthoredDocumentStoresTieredRecords(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "store.libravdb"), fakeEmbedder{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	doc, err := astv2.ExtractDocument("AGENTS.md", []byte(`---
+name: Codex
+---
+
+You must be careful.
+
+> Prefer exact formulas.
+
+- Always cite the governing math.
+
+Plain lore here.
+`), "tok-v1")
+	if err != nil {
+		t.Fatalf("ExtractDocument() error = %v", err)
+	}
+
+	if err := s.PersistAuthoredDocument(ctx, doc, true); err != nil {
+		t.Fatalf("PersistAuthoredDocument() error = %v", err)
+	}
+
+	hard, err := s.ListCollection(ctx, AuthoredHardCollection)
+	if err != nil {
+		t.Fatalf("ListCollection(hard) error = %v", err)
+	}
+	soft, err := s.ListCollection(ctx, AuthoredSoftCollection)
+	if err != nil {
+		t.Fatalf("ListCollection(soft) error = %v", err)
+	}
+	variant, err := s.ListCollection(ctx, AuthoredVariantCollection)
+	if err != nil {
+		t.Fatalf("ListCollection(variant) error = %v", err)
+	}
+
+	if len(hard) != 2 {
+		t.Fatalf("len(hard) = %d, want 2", len(hard))
+	}
+	if len(soft) != 2 {
+		t.Fatalf("len(soft) = %d, want 2", len(soft))
+	}
+	if len(variant) != 1 {
+		t.Fatalf("len(variant) = %d, want 1", len(variant))
+	}
+	if variant[0].Text != "Plain lore here." {
+		t.Fatalf("variant text = %q, want plain lore", variant[0].Text)
+	}
+	if got := metaString(variant[0].Metadata, "source_doc"); got != "AGENTS.md" {
+		t.Fatalf("variant source_doc = %q, want AGENTS.md", got)
+	}
+	if got := metaString(variant[0].Metadata, "node_kind"); got != string(astv2.NodeParagraph) {
+		t.Fatalf("variant node_kind = %q, want %q", got, astv2.NodeParagraph)
+	}
+	if got := metaFloat(hard[0].Metadata, "authority"); got != 1.0 {
+		t.Fatalf("hard authority = %v, want 1.0", got)
+	}
+}
+
+func TestPersistAuthoredDocumentReplacesPreviousSourceDocRecords(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "store.libravdb"), fakeEmbedder{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	first, err := astv2.ExtractDocument("souls.md", []byte(`You must answer precisely.
+
+Lore alpha.
+`), "tok-v1")
+	if err != nil {
+		t.Fatalf("ExtractDocument(first) error = %v", err)
+	}
+	second, err := astv2.ExtractDocument("souls.md", []byte(`> Style reminder.
+
+Lore beta.
+`), "tok-v1")
+	if err != nil {
+		t.Fatalf("ExtractDocument(second) error = %v", err)
+	}
+
+	if err := s.PersistAuthoredDocument(ctx, first, true); err != nil {
+		t.Fatalf("PersistAuthoredDocument(first) error = %v", err)
+	}
+	if err := s.PersistAuthoredDocument(ctx, second, true); err != nil {
+		t.Fatalf("PersistAuthoredDocument(second) error = %v", err)
+	}
+
+	hard, err := s.ListByMeta(ctx, AuthoredHardCollection, "source_doc", "souls.md")
+	if err != nil {
+		t.Fatalf("ListByMeta(hard) error = %v", err)
+	}
+	soft, err := s.ListByMeta(ctx, AuthoredSoftCollection, "source_doc", "souls.md")
+	if err != nil {
+		t.Fatalf("ListByMeta(soft) error = %v", err)
+	}
+	variant, err := s.ListByMeta(ctx, AuthoredVariantCollection, "source_doc", "souls.md")
+	if err != nil {
+		t.Fatalf("ListByMeta(variant) error = %v", err)
+	}
+
+	if len(hard) != 0 {
+		t.Fatalf("expected previous hard records to be removed, got %+v", hard)
+	}
+	if len(soft) != 1 || soft[0].Text != "Style reminder." {
+		t.Fatalf("expected only replacement soft record, got %+v", soft)
+	}
+	if len(variant) != 1 || variant[0].Text != "Lore beta." {
+		t.Fatalf("expected only replacement variant record, got %+v", variant)
+	}
+}
+
 func TestBackfillDirtyTiersRestoresMissingTier(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "store.libravdb"), fakeMatryoshkaEmbedder{})
@@ -474,4 +591,21 @@ func containsDirty(records []SearchResult, base, id string, dims int) bool {
 		}
 	}
 	return false
+}
+
+func metaFloat(meta map[string]any, key string) float64 {
+	value, ok := meta[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	default:
+		return 0
+	}
 }

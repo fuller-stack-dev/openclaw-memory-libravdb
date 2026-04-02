@@ -69,7 +69,7 @@ function metadataTimestamp(item: SearchResult): number {
 
 function serializeTaggedEntry(item: SearchResult, source: "recalled" | "session"): string {
   const role = inferRole(item, source);
-  return `<entry role="${escapeAttribute(role)}" source="${source}">${item.text}</entry>`;
+  return `<entry role="${escapeAttribute(role)}" source="${source}">${escapeTextContent(item.text)}</entry>`;
 }
 
 function inferRole(item: SearchResult, source: "recalled" | "session"): "user" | "assistant" | "unknown" {
@@ -87,7 +87,18 @@ function inferRole(item: SearchResult, source: "recalled" | "session"): "user" |
 }
 
 function escapeAttribute(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("\"", "&quot;").replaceAll("<", "&lt;");
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeTextContent(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 export function recentIds(messages: Array<{ id?: string }>, limit: number): string[] {

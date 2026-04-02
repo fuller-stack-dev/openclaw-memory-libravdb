@@ -136,6 +136,35 @@ func TestRPCHealthAndListByMeta(t *testing.T) {
 	}
 }
 
+func TestRPCListCollection(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.libravdb"), fakeEmbedder{})
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+
+	if err := st.InsertRecord(ctx, store.AuthoredHardCollection, "AGENTS.md#000001", []float32{0}, map[string]any{
+		"source_doc": "AGENTS.md",
+		"tier":       1,
+		"text":       "Always cite the governing math.",
+	}); err != nil {
+		t.Fatalf("InsertRecord() error = %v", err)
+	}
+
+	got, err := srv.Call(ctx, "list_collection", map[string]any{
+		"collection": store.AuthoredHardCollection,
+	})
+	if err != nil {
+		t.Fatalf("list_collection error = %v", err)
+	}
+
+	listed := got.(searchTextResult)
+	if len(listed.Results) != 1 || listed.Results[0].Text != "Always cite the governing math." {
+		t.Fatalf("unexpected list_collection results: %+v", listed.Results)
+	}
+}
+
 func TestRPCUnknownMethodErrors(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.libravdb"), fakeEmbedder{})

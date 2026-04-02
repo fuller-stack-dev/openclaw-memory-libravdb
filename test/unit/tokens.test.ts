@@ -44,6 +44,18 @@ test("buildMemoryHeader applies untrusted-context framing", () => {
   assert.match(header, /\[M1\] remember this/);
 });
 
+test("buildMemoryHeader separates authored directives from recalled memories", () => {
+  const header = buildMemoryHeader([
+    { id: "a", score: 1, text: "Always cite the math.", metadata: { authored: true, tier: 1 } },
+    { id: "b", score: 0.8, text: "historical recall", metadata: {} },
+  ]);
+
+  assert.match(header, /<authored_context>/);
+  assert.match(header, /\[A1\] Always cite the math\./);
+  assert.match(header, /<recalled_memories>/);
+  assert.match(header, /\[M1\] historical recall/);
+});
+
 test("recentIds returns trailing non-empty ids only", () => {
   assert.deepEqual(
     recentIds([{ id: "1" }, {}, { id: "2" }, { id: "" }, { id: "3" }], 3),

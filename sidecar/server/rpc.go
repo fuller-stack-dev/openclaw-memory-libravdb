@@ -16,12 +16,12 @@ import (
 type HandlerFn func(context.Context, any) (any, error)
 
 type Server struct {
-	Embedder     embed.Embedder
-	Extractive   summarize.Summarizer
-	Abstractive  summarize.Summarizer
-	Store        *store.Store
-	Gating       compact.GatingConfig
-	methods      map[string]HandlerFn
+	Embedder    embed.Embedder
+	Extractive  summarize.Summarizer
+	Abstractive summarize.Summarizer
+	Store       *store.Store
+	Gating      compact.GatingConfig
+	methods     map[string]HandlerFn
 }
 
 func New(embedder embed.Embedder, extractive summarize.Summarizer, abstractive summarize.Summarizer, st *store.Store, gating compact.GatingConfig) *Server {
@@ -39,6 +39,7 @@ func New(embedder embed.Embedder, extractive summarize.Summarizer, abstractive s
 		"insert_text":        s.handleInsertText,
 		"gating_scalar":      s.handleGatingScalar,
 		"search_text":        s.handleSearchText,
+		"list_collection":    s.handleListCollection,
 		"list_by_meta":       s.handleListByMeta,
 		"export_memory":      s.handleExportMemory,
 		"flush_namespace":    s.handleFlushNamespace,
@@ -82,6 +83,10 @@ type listByMetaParams struct {
 	Value      string `json:"value"`
 }
 
+type listCollectionParams struct {
+	Collection string `json:"collection"`
+}
+
 type deleteParams struct {
 	Collection string `json:"collection"`
 	ID         string `json:"id"`
@@ -112,13 +117,13 @@ type flushNamespaceParams struct {
 }
 
 type memoryStatus struct {
-	OK                bool   `json:"ok"`
-	Message           string `json:"message"`
-	TurnCount         int     `json:"turnCount"`
-	MemoryCount       int     `json:"memoryCount"`
-	GatingThreshold   float64 `json:"gatingThreshold"`
-	AbstractiveReady  bool   `json:"abstractiveReady"`
-	EmbeddingProfile  string `json:"embeddingProfile"`
+	OK               bool    `json:"ok"`
+	Message          string  `json:"message"`
+	TurnCount        int     `json:"turnCount"`
+	MemoryCount      int     `json:"memoryCount"`
+	GatingThreshold  float64 `json:"gatingThreshold"`
+	AbstractiveReady bool    `json:"abstractiveReady"`
+	EmbeddingProfile string  `json:"embeddingProfile"`
 }
 
 type exportMemoryRecord struct {
@@ -208,6 +213,18 @@ func (s *Server) handleListByMeta(ctx context.Context, raw any) (any, error) {
 		return nil, err
 	}
 	results, err := s.Store.ListByMeta(ctx, params.Collection, params.Key, params.Value)
+	if err != nil {
+		return nil, err
+	}
+	return searchTextResult{Results: results}, nil
+}
+
+func (s *Server) handleListCollection(ctx context.Context, raw any) (any, error) {
+	var params listCollectionParams
+	if err := decode(raw, &params); err != nil {
+		return nil, err
+	}
+	results, err := s.Store.ListCollection(ctx, params.Collection)
 	if err != nil {
 		return nil, err
 	}

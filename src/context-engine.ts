@@ -1,6 +1,6 @@
 import { scoreCandidates } from "./scoring.js";
 import { buildMemoryHeader, recentIds } from "./recall-utils.js";
-import { countTokens, fitPromptBudget } from "./tokens.js";
+import { countTokens, estimateTokens, fitPromptBudget } from "./tokens.js";
 import type { RpcGetter } from "./plugin-runtime.js";
 import type {
   ContextAssembleArgs,
@@ -13,17 +13,32 @@ import type {
   SearchResult,
 } from "./types.js";
 
+const AUTHORED_HARD_COLLECTION = "authored:hard";
+const AUTHORED_SOFT_COLLECTION = "authored:soft";
+const AUTHORED_VARIANT_COLLECTION = "authored:variant";
+
 export function buildContextEngineFactory(
   getRpc: RpcGetter,
   cfg: PluginConfig,
   recallCache: RecallCache<SearchResult>,
 ) {
+  let authoredHardCache: SearchResult[] | null = null;
+  let authoredSoftCache: SearchResult[] | null = null;
+
   return {
     ownsCompaction: true,
     async bootstrap({ sessionId, userId }: ContextBootstrapArgs) {
       const rpc = await getRpc();
       await rpc.call("ensure_collections", {
-        collections: [`session:${sessionId}`, `turns:${userId}`, `user:${userId}`, "global"],
+        collections: [
+          `session:${sessionId}`,
+          `turns:${userId}`,
+          `user:${userId}`,
+          "global",
+          AUTHORED_HARD_COLLECTION,
+          AUTHORED_SOFT_COLLECTION,
+          AUTHORED_VARIANT_COLLECTION,
+        ],
       });
       return { ok: true };
     },
@@ -101,7 +116,14 @@ export function buildContextEngineFactory(
 
       try {
         const rpc = await getRpc();
-        const [sessionHits, userHits, globalHits] = await Promise.all([
+        const [authoredHard, authoredSoft] = await loadAuthoredCollections(rpc, {
+          hard: authoredHardCache,
+          soft: authoredSoftCache,
+        });
+        authoredHardCache = authoredHard;
+        authoredSoftCache = authoredSoft;
+
+        const [sessionHits, userHits, globalHits, authoredVariantHits] = await Promise.all([
           rpc.call<{ results: SearchResult[] }>("search_text", {
             collection: `session:${sessionId}`,
             text: queryText,
@@ -122,6 +144,13 @@ export function buildContextEngineFactory(
                 text: queryText,
                 k: Math.ceil((cfg.topK ?? 8) / 4),
               }),
+          cached?.authoredVariantHits
+            ? Promise.resolve({ results: cached.authoredVariantHits })
+            : rpc.call<{ results: SearchResult[] }>("search_text", {
+                collection: AUTHORED_VARIANT_COLLECTION,
+                text: queryText,
+                k: Math.ceil((cfg.topK ?? 8) / 2),
+              }),
         ]);
 
         if (!cached) {
@@ -130,11 +159,21 @@ export function buildContextEngineFactory(
             queryText,
             userHits: userHits.results,
             globalHits: globalHits.results,
+            authoredVariantHits: authoredVariantHits.results,
           });
         }
 
+        const memoryBudget = tokenBudget * (cfg.tokenBudgetFraction ?? 0.25);
+        const hardItems = authoredHard;
+        const hardUsed = tokenCostSum(hardItems);
+        const authoredSoftTarget = Math.max(0, memoryBudget * (cfg.authoredSoftBudgetFraction ?? 0.3));
+        const softBudget = Math.max(0, Math.min(authoredSoftTarget, memoryBudget - hardUsed));
+        const softItems = fitPromptBudget(authoredSoft, softBudget);
+        const retrievalBudget = Math.max(0, memoryBudget - hardUsed - tokenCostSum(softItems));
+
         const ranked = scoreCandidates(
           [
+            ...authoredVariantHits.results,
             ...sessionHits.results,
             ...userHits.results,
             ...globalHits.results,
@@ -152,10 +191,11 @@ export function buildContextEngineFactory(
           },
         );
 
-        const selected = fitPromptBudget(
-          ranked,
-          tokenBudget * (cfg.tokenBudgetFraction ?? 0.25),
-        );
+        const selected = [
+          ...hardItems,
+          ...softItems,
+          ...fitPromptBudget(ranked, retrievalBudget),
+        ];
 
         const selectedMessages = selected.map((item) => ({
           role: "system",
@@ -192,4 +232,36 @@ export function buildContextEngineFactory(
       };
     },
   };
+}
+
+async function loadAuthoredCollections(
+  rpc: Awaited<ReturnType<RpcGetter>>,
+  cached: { hard: SearchResult[] | null; soft: SearchResult[] | null },
+): Promise<[SearchResult[], SearchResult[]]> {
+  if (cached.hard && cached.soft) {
+    return [cached.hard, cached.soft];
+  }
+
+  const [hard, soft] = await Promise.all([
+    cached.hard
+      ? Promise.resolve({ results: cached.hard })
+      : rpc.call<{ results: SearchResult[] }>("list_collection", { collection: AUTHORED_HARD_COLLECTION }),
+    cached.soft
+      ? Promise.resolve({ results: cached.soft })
+      : rpc.call<{ results: SearchResult[] }>("list_collection", { collection: AUTHORED_SOFT_COLLECTION }),
+  ]);
+
+  return [hard.results, soft.results];
+}
+
+function tokenCostSum(items: SearchResult[]): number {
+  return items.reduce((sum, item) => sum + tokenCost(item), 0);
+}
+
+function tokenCost(item: SearchResult): number {
+  const estimate = item.metadata.token_estimate;
+  if (typeof estimate === "number" && estimate > 0) {
+    return estimate;
+  }
+  return estimateTokens(item.text);
 }

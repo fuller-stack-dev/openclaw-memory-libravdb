@@ -37,6 +37,8 @@ export interface PluginConfig {
   recencyLambdaUser?: number;
   recencyLambdaGlobal?: number;
   tokenBudgetFraction?: number;
+  authoredHardBudgetFraction?: number;
+  authoredSoftBudgetFraction?: number;
   compactThreshold?: number;
   ollamaUrl?: string;
   compactModel?: string;
@@ -75,6 +77,12 @@ export interface SearchResult {
     sessionId?: string;
     userId?: string;
     role?: string;
+    source_doc?: string;
+    node_kind?: string;
+    ordinal?: number;
+    tier?: number;
+    authored?: boolean;
+    token_estimate?: number;
     [key: string]: unknown;
   };
   finalScore?: number;
@@ -111,6 +119,7 @@ export interface RecallCacheEntry<T = unknown> {
   queryText: string;
   userHits: T[];
   globalHits: T[];
+  authoredVariantHits?: T[];
 }
 
 export interface RecallCache<T = unknown> {

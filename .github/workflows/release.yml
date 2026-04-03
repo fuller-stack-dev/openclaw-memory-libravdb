@@ -35,10 +35,6 @@ jobs:
             goos: linux
             goarch: arm64
             asset_name: libravdbd-linux-arm64
-          - runner: windows-2022
-            goos: windows
-            goarch: amd64
-            asset_name: libravdbd-windows-amd64.exe
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -71,14 +67,6 @@ jobs:
         working-directory: dist
         run: |
           shasum -a 256 "${{ matrix.asset_name }}" > "${{ matrix.asset_name }}.sha256"
-
-      - name: Generate checksum (windows)
-        if: runner.os == 'Windows'
-        working-directory: dist
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash "${{ matrix.asset_name }}" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path "${{ matrix.asset_name }}.sha256" -Value "$hash  ${{ matrix.asset_name }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -151,8 +139,6 @@ jobs:
             dist/libravdbd-linux-amd64.sha256
             dist/libravdbd-linux-arm64
             dist/libravdbd-linux-arm64.sha256
-            dist/libravdbd-windows-amd64.exe
-            dist/libravdbd-windows-amd64.exe.sha256
             dist/libravdbd.rb
 
   publish-homebrew-tap:

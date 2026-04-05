@@ -58,6 +58,7 @@ test("buildSidecarEnv maps embedding config into sidecar environment", () => {
     gatingTechNorm: 1.5,
     ingestionGateThreshold: 0.35,
     gatingCentroidK: 10,
+    lifecycleJournalMaxEntries: 250,
   });
 
   assert.deepEqual(env, {
@@ -79,5 +80,6 @@ test("buildSidecarEnv maps embedding config into sidecar environment", () => {
     LIBRAVDB_GATING_TECH_NORM: "1.5",
     LIBRAVDB_GATING_THRESHOLD: "0.35",
     LIBRAVDB_GATING_CENTROID_K: "10",
+    LIBRAVDB_LIFECYCLE_JOURNAL_MAX_ENTRIES: "250",
   });
 });

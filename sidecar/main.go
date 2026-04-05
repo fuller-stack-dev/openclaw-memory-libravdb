@@ -95,15 +95,15 @@ func runServe() {
 	defer stop()
 
 	srv := server.New(embedder, extractive, abstractive, st, compact.GatingConfig{
-		W1c: cfg.GatingW1c,
-		W2c: cfg.GatingW2c,
-		W3c: cfg.GatingW3c,
-		W1t: cfg.GatingW1t,
-		W2t: cfg.GatingW2t,
-		W3t: cfg.GatingW3t,
+		W1c:       cfg.GatingW1c,
+		W2c:       cfg.GatingW2c,
+		W3c:       cfg.GatingW3c,
+		W1t:       cfg.GatingW1t,
+		W2t:       cfg.GatingW2t,
+		W3t:       cfg.GatingW3t,
 		TechNorm:  cfg.GatingTechNorm,
 		Threshold: cfg.GatingThreshold,
-	})
+	}, cfg.LifecycleJournalMaxEntries)
 	listener, endpoint, cleanup, err := server.Listen(cfg.RPCEndpoint)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

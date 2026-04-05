@@ -19,14 +19,15 @@ import (
 )
 
 const (
-	dirtyTierCollection       = "_tier_dirty"
-	AuthoredHardCollection    = "authored:hard"
-	AuthoredSoftCollection    = "authored:soft"
-	AuthoredVariantCollection = "authored:variant"
-	dirtyTierDims             = 1
-	authoredTierDims          = 1
-	maxCollections            = 10000
-	rawStoreCap               = 4096
+	dirtyTierCollection        = "_tier_dirty"
+	AuthoredHardCollection     = "authored:hard"
+	AuthoredSoftCollection     = "authored:soft"
+	AuthoredVariantCollection  = "authored:variant"
+	LifecycleJournalCollection = "_internal:lifecycle_journal"
+	dirtyTierDims              = 1
+	authoredTierDims           = 1
+	maxCollections             = 10000
+	rawStoreCap                = 4096
 )
 
 type SearchResult struct {
@@ -174,6 +175,41 @@ func (s *Store) EnsureAuthoredCollections(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) AppendLifecycleJournal(ctx context.Context, id string, meta map[string]any) error {
+	return s.insertRecord(ctx, LifecycleJournalCollection, id, "", []float32{0}, meta)
+}
+
+func (s *Store) ListLifecycleJournal(ctx context.Context) ([]SearchResult, error) {
+	return s.ListCollection(ctx, LifecycleJournalCollection)
+}
+
+func (s *Store) PruneLifecycleJournal(ctx context.Context, maxEntries int) error {
+	if maxEntries <= 0 {
+		return nil
+	}
+	results, err := s.ListLifecycleJournal(ctx)
+	if err != nil {
+		return err
+	}
+	if len(results) <= maxEntries {
+		return nil
+	}
+	sort.Slice(results, func(i, j int) bool {
+		leftTs := metaInt(results[i].Metadata, "ts")
+		rightTs := metaInt(results[j].Metadata, "ts")
+		if leftTs != rightTs {
+			return leftTs < rightTs
+		}
+		return results[i].ID < results[j].ID
+	})
+	excess := len(results) - maxEntries
+	ids := make([]string, 0, excess)
+	for _, item := range results[:excess] {
+		ids = append(ids, item.ID)
+	}
+	return s.DeleteBatch(ctx, LifecycleJournalCollection, ids)
 }
 
 func (s *Store) insertRecord(ctx context.Context, collection, id, text string, vec []float32, meta map[string]any) error {
@@ -654,6 +690,8 @@ func (s *Store) collectionDimensions(collection string, vec []float32, meta map[
 	case strings.HasSuffix(collection, ":256d"):
 		return embed.DimsL2
 	case collection == AuthoredHardCollection, collection == AuthoredSoftCollection:
+		return authoredTierDims
+	case collection == LifecycleJournalCollection:
 		return authoredTierDims
 	case collection == dirtyTierCollection:
 		return dirtyTierDims

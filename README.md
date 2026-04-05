@@ -19,6 +19,8 @@ It replaces the default lightweight memory path with a full context lifecycle:
 This repository pairs a TypeScript OpenClaw plugin with a Go daemon backed by
 `libraVDB`. The plugin owns both the `memory` and `contextEngine` slots, while
 the daemon handles embeddings, retrieval, storage, and compaction.
+On newer OpenClaw builds, it also bridges the built-in `memory_search` runtime
+to the same libraVDB sidecar instead of leaving that tool inert.
 
 ## Why This Exists
 
@@ -40,6 +42,15 @@ These are the core differentiators the project is built around:
 
 - Dual slot ownership: the plugin owns both memory prompt injection and the
   full context lifecycle.
+- Built-in `memory_search` bridge: newer OpenClaw memory runtime calls are
+  routed into the same sidecar-backed retrieval path.
+- Lifecycle hint adoption: `before_reset` and `session_end` are used as
+  advisory signals into the sidecar without giving OpenClaw control of ingest
+  or compaction.
+- Sidecar-owned lifecycle journal: reset/end hints are recorded internally for
+  debugging and auditing without entering normal memory retrieval.
+  The journal is bounded by a sidecar retention cap so it does not grow
+  forever.
 - Local-first runtime: the core path does not depend on external embedding
   services.
 - Three-tier memory: session, durable user, and global memory stay distinct.
@@ -119,6 +130,7 @@ If your daemon runs elsewhere, set an explicit `sidecarPath`, for example:
 ```text
 OpenClaw host
   -> memoryPromptSection (durable user/global recall)
+  -> memory runtime bridge (built-in memory_search)
   -> context engine (bootstrap / ingest / assemble / compact)
   -> plugin runtime
   -> JSON-RPC
@@ -192,6 +204,8 @@ practical points are:
 
 - This plugin should own both `memory` and `contextEngine`. Partial slot
   assignment is a misconfiguration.
+- On hosts that expose `registerMemoryRuntime`, the built-in `memory_search`
+  tool now searches the same libraVDB-backed memory stores.
 - The daemon is a separate operational unit. Treat plugin lifecycle and daemon
   lifecycle as different concerns.
 - The system is local-first by design. The critical retrieval path does not

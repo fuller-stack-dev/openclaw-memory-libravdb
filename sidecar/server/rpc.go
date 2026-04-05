@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/compact"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/embed"
@@ -16,39 +17,43 @@ import (
 type HandlerFn func(context.Context, any) (any, error)
 
 type Server struct {
-	Embedder    embed.Embedder
-	Extractive  summarize.Summarizer
-	Abstractive summarize.Summarizer
-	Store       *store.Store
-	Gating      compact.GatingConfig
-	methods     map[string]HandlerFn
+	Embedder                   embed.Embedder
+	Extractive                 summarize.Summarizer
+	Abstractive                summarize.Summarizer
+	Store                      *store.Store
+	Gating                     compact.GatingConfig
+	LifecycleJournalMaxEntries int
+	methods                    map[string]HandlerFn
 }
 
-func New(embedder embed.Embedder, extractive summarize.Summarizer, abstractive summarize.Summarizer, st *store.Store, gating compact.GatingConfig) *Server {
+func New(embedder embed.Embedder, extractive summarize.Summarizer, abstractive summarize.Summarizer, st *store.Store, gating compact.GatingConfig, lifecycleJournalMaxEntries int) *Server {
 	s := &Server{
-		Embedder:    embedder,
-		Extractive:  extractive,
-		Abstractive: abstractive,
-		Store:       st,
-		Gating:      gating,
+		Embedder:                   embedder,
+		Extractive:                 extractive,
+		Abstractive:                abstractive,
+		Store:                      st,
+		Gating:                     gating,
+		LifecycleJournalMaxEntries: lifecycleJournalMaxEntries,
 	}
 	s.methods = map[string]HandlerFn{
-		"health":             s.handleHealth,
-		"status":             s.handleStatus,
-		"ensure_collections": s.handleEnsureCollections,
-		"insert_text":        s.handleInsertText,
-		"gating_scalar":      s.handleGatingScalar,
-		"search_text":        s.handleSearchText,
+		"health":                  s.handleHealth,
+		"status":                  s.handleStatus,
+		"session_lifecycle_hint":  s.handleSessionLifecycleHint,
+		"list_lifecycle_journal":  s.handleListLifecycleJournal,
+		"ensure_collections":      s.handleEnsureCollections,
+		"insert_text":             s.handleInsertText,
+		"gating_scalar":           s.handleGatingScalar,
+		"search_text":             s.handleSearchText,
 		"search_text_collections": s.handleSearchTextCollections,
-		"bump_access_counts": s.handleBumpAccessCounts,
-		"list_collection":    s.handleListCollection,
-		"list_by_meta":       s.handleListByMeta,
-		"export_memory":      s.handleExportMemory,
-		"flush_namespace":    s.handleFlushNamespace,
-		"delete":             s.handleDelete,
-		"delete_batch":       s.handleDeleteBatch,
-		"compact_session":    s.handleCompact,
-		"flush":              s.handleFlush,
+		"bump_access_counts":      s.handleBumpAccessCounts,
+		"list_collection":         s.handleListCollection,
+		"list_by_meta":            s.handleListByMeta,
+		"export_memory":           s.handleExportMemory,
+		"flush_namespace":         s.handleFlushNamespace,
+		"delete":                  s.handleDelete,
+		"delete_batch":            s.handleDeleteBatch,
+		"compact_session":         s.handleCompact,
+		"flush":                   s.handleFlush,
 	}
 	return s
 }
@@ -80,10 +85,10 @@ type searchTextParams struct {
 }
 
 type searchTextCollectionsParams struct {
-	Collections        []string              `json:"collections"`
-	Text               string                `json:"text"`
-	K                  int                   `json:"k"`
-	ExcludeByCollection map[string][]string  `json:"excludeByCollection"`
+	Collections         []string            `json:"collections"`
+	Text                string              `json:"text"`
+	K                   int                 `json:"k"`
+	ExcludeByCollection map[string][]string `json:"excludeByCollection"`
 }
 
 type listByMetaParams struct {
@@ -94,6 +99,11 @@ type listByMetaParams struct {
 
 type listCollectionParams struct {
 	Collection string `json:"collection"`
+}
+
+type listLifecycleJournalParams struct {
+	SessionID string `json:"sessionId,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
 }
 
 type bumpAccessCountsParams struct {
@@ -116,12 +126,12 @@ type deleteBatchParams struct {
 }
 
 type compactParams struct {
-	SessionID            string `json:"sessionId"`
-	Force                bool   `json:"force"`
-	TargetSize           int    `json:"targetSize,omitempty"`
-	ContinuityMinTurns   int    `json:"continuityMinTurns,omitempty"`
-	ContinuityTailTokens int    `json:"continuityTailBudgetTokens,omitempty"`
-	ContinuityPriorTokens int   `json:"continuityPriorContextTokens,omitempty"`
+	SessionID             string `json:"sessionId"`
+	Force                 bool   `json:"force"`
+	TargetSize            int    `json:"targetSize,omitempty"`
+	ContinuityMinTurns    int    `json:"continuityMinTurns,omitempty"`
+	ContinuityTailTokens  int    `json:"continuityTailBudgetTokens,omitempty"`
+	ContinuityPriorTokens int    `json:"continuityPriorContextTokens,omitempty"`
 }
 
 type searchTextResult struct {
@@ -138,13 +148,29 @@ type flushNamespaceParams struct {
 }
 
 type memoryStatus struct {
-	OK               bool    `json:"ok"`
-	Message          string  `json:"message"`
-	TurnCount        int     `json:"turnCount"`
-	MemoryCount      int     `json:"memoryCount"`
-	GatingThreshold  float64 `json:"gatingThreshold"`
-	AbstractiveReady bool    `json:"abstractiveReady"`
-	EmbeddingProfile string  `json:"embeddingProfile"`
+	OK                 bool    `json:"ok"`
+	Message            string  `json:"message"`
+	TurnCount          int     `json:"turnCount"`
+	MemoryCount        int     `json:"memoryCount"`
+	LifecycleHintCount int     `json:"lifecycleHintCount"`
+	GatingThreshold    float64 `json:"gatingThreshold"`
+	AbstractiveReady   bool    `json:"abstractiveReady"`
+	EmbeddingProfile   string  `json:"embeddingProfile"`
+}
+
+type sessionLifecycleHintParams struct {
+	Hook               string `json:"hook"`
+	Reason             string `json:"reason,omitempty"`
+	SessionFile        string `json:"sessionFile,omitempty"`
+	SessionID          string `json:"sessionId,omitempty"`
+	SessionKey         string `json:"sessionKey,omitempty"`
+	AgentID            string `json:"agentId,omitempty"`
+	WorkspaceDir       string `json:"workspaceDir,omitempty"`
+	MessageCount       int    `json:"messageCount,omitempty"`
+	DurationMs         int    `json:"durationMs,omitempty"`
+	TranscriptArchived bool   `json:"transcriptArchived,omitempty"`
+	NextSessionID      string `json:"nextSessionId,omitempty"`
+	NextSessionKey     string `json:"nextSessionKey,omitempty"`
 }
 
 type exportMemoryRecord struct {
@@ -165,15 +191,81 @@ func (s *Server) handleHealth(_ context.Context, _ any) (any, error) {
 func (s *Server) handleStatus(_ context.Context, _ any) (any, error) {
 	base := health.Check(s.Embedder, s.Store)
 	status := memoryStatus{
-		OK:               base.OK,
-		Message:          base.Message,
-		TurnCount:        s.Store.CountByPrefix("turns:"),
-		MemoryCount:      s.Store.CountByPrefix("user:"),
-		GatingThreshold:  s.Gating.Threshold,
-		AbstractiveReady: s.Abstractive != nil && s.Abstractive.Ready(),
-		EmbeddingProfile: firstNonEmpty(s.Embedder.Profile().Family, s.Embedder.Profile().Backend, "unknown"),
+		OK:                 base.OK,
+		Message:            base.Message,
+		TurnCount:          s.Store.CountByPrefix("turns:"),
+		MemoryCount:        s.Store.CountByPrefix("user:"),
+		LifecycleHintCount: s.Store.CountByPrefix(store.LifecycleJournalCollection),
+		GatingThreshold:    s.Gating.Threshold,
+		AbstractiveReady:   s.Abstractive != nil && s.Abstractive.Ready(),
+		EmbeddingProfile:   firstNonEmpty(s.Embedder.Profile().Family, s.Embedder.Profile().Backend, "unknown"),
 	}
 	return status, nil
+}
+
+func (s *Server) handleSessionLifecycleHint(ctx context.Context, raw any) (any, error) {
+	var params sessionLifecycleHintParams
+	if err := decode(raw, &params); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	id := fmt.Sprintf("%s:%s:%d", firstNonEmpty(params.Hook, "unknown"), firstNonEmpty(params.SessionID, "none"), now.UnixNano())
+	meta := map[string]any{
+		"type":               "session_lifecycle_hint",
+		"internal":           true,
+		"hook":               params.Hook,
+		"reason":             params.Reason,
+		"sessionId":          params.SessionID,
+		"sessionKey":         params.SessionKey,
+		"agentId":            params.AgentID,
+		"workspaceDir":       params.WorkspaceDir,
+		"sessionFile":        params.SessionFile,
+		"messageCount":       params.MessageCount,
+		"durationMs":         params.DurationMs,
+		"transcriptArchived": params.TranscriptArchived,
+		"nextSessionId":      params.NextSessionID,
+		"nextSessionKey":     params.NextSessionKey,
+		"ts":                 now.UnixMilli(),
+		"source":             "openclaw-hook",
+		"ingest_kind":        "lifecycle_journal",
+	}
+	if err := s.Store.AppendLifecycleJournal(ctx, id, meta); err != nil {
+		return nil, err
+	}
+	if err := s.Store.PruneLifecycleJournal(ctx, s.LifecycleJournalMaxEntries); err != nil {
+		return nil, err
+	}
+	if err := s.Store.Flush(ctx); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"ok":        true,
+		"hook":      params.Hook,
+		"sessionId": params.SessionID,
+		"reason":    params.Reason,
+	}, nil
+}
+
+func (s *Server) handleListLifecycleJournal(ctx context.Context, raw any) (any, error) {
+	var params listLifecycleJournalParams
+	if err := decode(raw, &params); err != nil {
+		return nil, err
+	}
+	results, err := s.Store.ListLifecycleJournal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]store.SearchResult, 0, len(results))
+	for _, item := range results {
+		if params.SessionID != "" && metaStringValue(item.Metadata, "sessionId") != params.SessionID {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if params.Limit > 0 && len(filtered) > params.Limit {
+		filtered = filtered[:params.Limit]
+	}
+	return searchTextResult{Results: filtered}, nil
 }
 
 func (s *Server) handleEnsureCollections(ctx context.Context, raw any) (any, error) {
@@ -364,8 +456,8 @@ func (s *Server) handleCompact(ctx context.Context, raw any) (any, error) {
 		params.Force,
 		params.TargetSize,
 		compact.ContinuityConfig{
-			MinTurns:          params.ContinuityMinTurns,
-			TailBudgetTokens:  params.ContinuityTailTokens,
+			MinTurns:           params.ContinuityMinTurns,
+			TailBudgetTokens:   params.ContinuityTailTokens,
 			PriorContextTokens: params.ContinuityPriorTokens,
 		},
 	)
@@ -380,6 +472,21 @@ func (s *Server) handleFlush(ctx context.Context, _ any) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"ok": true}, nil
+}
+
+func metaStringValue(meta map[string]any, key string) string {
+	if meta == nil {
+		return ""
+	}
+	value, ok := meta[key]
+	if !ok {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return text
 }
 
 func decode(raw any, target any) error {

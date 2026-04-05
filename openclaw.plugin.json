@@ -64,6 +64,10 @@
         "type": "number",
         "default": 10
       },
+      "lifecycleJournalMaxEntries": {
+        "type": "number",
+        "default": 500
+      },
       "compactionQualityWeight": {
         "type": "number",
         "default": 0.5,

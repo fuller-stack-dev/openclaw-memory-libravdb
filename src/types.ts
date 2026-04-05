@@ -32,6 +32,7 @@ export interface PluginConfig {
   };
   gatingTechNorm?: number;
   gatingCentroidK?: number;
+  lifecycleJournalMaxEntries?: number;
   compactionQualityWeight?: number;
   recencyLambdaSession?: number;
   recencyLambdaUser?: number;

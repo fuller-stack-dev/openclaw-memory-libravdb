@@ -30,6 +30,9 @@ test("source checklist invariants are present in host code", async () => {
   assert.match(indexTs, /kind:\s*\["memory",\s*"context-engine"\]/);
   assert.match(indexTs, /registerContextEngine\("libravdb-memory"/);
   assert.match(indexTs, /registerMemoryPromptSection/);
+  assert.match(indexTs, /registerMemoryRuntime\?\.\(/);
+  assert.match(indexTs, /api\.on\("before_reset"/);
+  assert.match(indexTs, /api\.on\("session_end"/);
   assert.match(indexTs, /api\.on\("gateway_stop"/);
   assert.doesNotMatch(indexTs, /api\.on\("shutdown"/);
   assert.doesNotMatch(indexTs, /async register\s*\(/);

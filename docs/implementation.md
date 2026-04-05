@@ -24,6 +24,63 @@ Why:
 This is why the code registers both `registerContextEngine("libravdb-memory", …)`
 and `registerMemoryPromptSection(...)` instead of relying on only one hook.
 
+On newer OpenClaw hosts, [`src/index.ts`](../src/index.ts) also registers
+`registerMemoryRuntime(...)` as an additive bridge for the built-in
+`memory_search` tool. That bridge reuses the same sidecar-backed retrieval path
+instead of introducing a second memory backend.
+
+## Why `registerMemoryRuntime` Is Additive
+
+Implemented in [`src/memory-runtime.ts`](../src/memory-runtime.ts).
+
+The newer OpenClaw memory runtime seam is useful, but it does not replace the
+spec-driven architecture in this repository.
+
+What the runtime bridge does:
+
+- exposes a search manager for the built-in `memory_search` tool
+- routes search into the same libraVDB collections already used by the plugin
+- reports sidecar status through the existing JSON-RPC `status` method
+
+What it intentionally does not do yet:
+
+- it does not replace context-engine ingest
+- it does not replace context-engine compaction
+- it does not register a host flush plan that could duplicate transcript ingest
+
+That split is deliberate. The plugin already owns ingest and compaction through
+the context engine and sidecar, so `registerMemoryRuntime` is safe as a search
+bridge while `registerMemoryFlushPlan` remains deferred until it can be mapped
+cleanly onto the existing lifecycle.
+
+## Why `before_reset` and `session_end` Stay Advisory
+
+Implemented in [`src/lifecycle-hooks.ts`](../src/lifecycle-hooks.ts) and
+[`src/plugin-runtime.ts`](../src/plugin-runtime.ts).
+
+Newer OpenClaw hosts expose `before_reset` and `session_end` plugin hooks.
+This plugin uses them, but only as hints into the sidecar.
+
+Current behavior:
+
+- `before_reset` forwards session identifiers, reset reason, and observed
+  message count
+- `session_end` forwards end reason, archive linkage, and follow-on session
+  metadata
+- the sidecar appends the hint to an internal lifecycle journal and performs a
+  best-effort flush/ack
+
+Important boundary:
+
+- these hooks are not the source of truth for memory correctness
+- failure to deliver them must not break the session
+- ingest, retrieval, and compaction still belong to the context engine and
+  sidecar runtime we control
+- lifecycle journal entries live in an internal collection and are only visible
+  through explicit status/debug surfaces such as `openclaw memory journal`
+- lifecycle retention is bounded and enforced on append by pruning the oldest
+  journal entries first
+
 ## Why Ingest Is Fire-and-Forget
 
 Implemented in [`src/context-engine.ts`](../src/context-engine.ts).

@@ -357,6 +357,9 @@ export function buildSidecarEnv(cfg: PluginConfig): Record<string, string> {
   if (typeof cfg.gatingCentroidK === "number" && cfg.gatingCentroidK > 0) {
     env.LIBRAVDB_GATING_CENTROID_K = String(cfg.gatingCentroidK);
   }
+  if (typeof cfg.lifecycleJournalMaxEntries === "number" && cfg.lifecycleJournalMaxEntries > 0) {
+    env.LIBRAVDB_LIFECYCLE_JOURNAL_MAX_ENTRIES = String(cfg.lifecycleJournalMaxEntries);
+  }
 
   return env;
 }

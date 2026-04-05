@@ -21,6 +21,7 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
     registerMemoryPromptSection(builder: unknown): void;
     registerMemoryFlushPlan?(resolver: unknown): void;
     registerMemoryRuntime?(runtime: unknown): void;
+    registerMemoryEmbeddingProvider?(provider: unknown): void;
     registerCli?(
       builder: (ctx: { program: OpenClawCliCommand }) => void,
       opts?: {

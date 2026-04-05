@@ -9,6 +9,7 @@ type StatusResult = {
   message?: string;
   turnCount?: number;
   memoryCount?: number;
+  lifecycleHintCount?: number;
   gatingThreshold?: number;
   abstractiveReady?: boolean;
   embeddingProfile?: string;
@@ -25,7 +26,16 @@ type ExportResult = {
 
 type CliOptionBag = {
   userId?: string;
+  sessionId?: string;
+  limit?: string | number;
   yes?: boolean;
+};
+
+type JournalResult = {
+  results?: Array<{
+    id: string;
+    metadata: Record<string, unknown>;
+  }>;
 };
 
 type CliCommand = {
@@ -74,6 +84,12 @@ export function registerMemoryCli(
         .description("Stream stored memories as newline-delimited JSON");
       exportCmd.option("--user-id <userId>", "Restrict export to a single user namespace");
       exportCmd.action((opts) => void runExport(runtime, opts, logger));
+
+      const journal = ensureCommand(root, "journal")
+        .description("Inspect internal lifecycle journal hints");
+      journal.option("--session-id <sessionId>", "Restrict journal entries to one session id");
+      journal.option("--limit <limit>", "Maximum journal entries to show");
+      journal.action((opts) => void runJournal(runtime, opts, logger));
     },
     {
       descriptors: [
@@ -108,6 +124,7 @@ async function runStatus(runtime: PluginRuntime, cfg: PluginConfig, logger: Logg
       Sidecar: status.ok ? "running" : "down",
       "Turns stored": status.turnCount ?? 0,
       "Memories stored": status.memoryCount ?? 0,
+      "Lifecycle hints": status.lifecycleHintCount ?? 0,
       "Gate threshold": status.gatingThreshold ?? cfg.ingestionGateThreshold ?? 0.35,
       "Abstractive model": status.abstractiveReady ? "ready" : "not provisioned",
       "Embedding profile": status.embeddingProfile ?? "unknown",
@@ -119,6 +136,7 @@ async function runStatus(runtime: PluginRuntime, cfg: PluginConfig, logger: Logg
       Sidecar: "down",
       "Turns stored": "n/a",
       "Memories stored": "n/a",
+      "Lifecycle hints": "n/a",
       "Gate threshold": cfg.ingestionGateThreshold ?? 0.35,
       "Abstractive model": "unknown",
       "Embedding profile": "unknown",
@@ -169,6 +187,22 @@ async function runExport(runtime: PluginRuntime, opts: CliOptionBag | undefined,
   }
 }
 
+async function runJournal(runtime: PluginRuntime, opts: CliOptionBag | undefined, logger: LoggerLike): Promise<void> {
+  try {
+    const rpc = await runtime.getRpc();
+    const result = await rpc.call<JournalResult>("list_lifecycle_journal", {
+      sessionId: opts?.sessionId?.trim() || undefined,
+      limit: normalizeLimit(opts?.limit),
+    });
+    for (const record of result.results ?? []) {
+      stdout.write(`${JSON.stringify(record)}\n`);
+    }
+  } catch (error) {
+    logger.error(`LibraVDB journal lookup failed: ${formatError(error)}`);
+    process.exitCode = 1;
+  }
+}
+
 async function confirm(prompt: string): Promise<boolean> {
   const rl = createInterface({ input: stdin, output: stdout });
   try {
@@ -184,6 +218,19 @@ function formatError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function normalizeLimit(limit: string | number | undefined): number | undefined {
+  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+    return Math.floor(limit);
+  }
+  if (typeof limit === "string") {
+    const parsed = Number.parseInt(limit, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 type CliRegistrar = {

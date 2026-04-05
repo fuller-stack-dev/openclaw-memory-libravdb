@@ -5,8 +5,24 @@ import type { LoggerLike, PluginConfig, SidecarHandle } from "./types.js";
 export type RpcGetter = () => Promise<RpcClient>;
 export const DEFAULT_RPC_TIMEOUT_MS = 30000;
 
+export interface LifecycleHint {
+  hook: "before_reset" | "session_end";
+  reason?: string;
+  sessionFile?: string;
+  sessionId?: string;
+  sessionKey?: string;
+  agentId?: string;
+  workspaceDir?: string;
+  messageCount?: number;
+  durationMs?: number;
+  transcriptArchived?: boolean;
+  nextSessionId?: string;
+  nextSessionKey?: string;
+}
+
 export interface PluginRuntime {
   getRpc: RpcGetter;
+  emitLifecycleHint(hint: LifecycleHint): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -49,6 +65,14 @@ export function createPluginRuntime(
     async getRpc() {
       return (await ensureStarted()).rpc;
     },
+    async emitLifecycleHint(hint: LifecycleHint) {
+      try {
+        const active = await ensureStarted();
+        await active.rpc.call("session_lifecycle_hint", hint);
+      } catch (error) {
+        logger.warn?.(`LibraVDB lifecycle hint dropped: ${formatError(error)}`);
+      }
+    },
     async shutdown() {
       stopped = true;
       if (!started) {
@@ -64,4 +88,11 @@ export function createPluginRuntime(
       }
     },
   };
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return String(error);
 }

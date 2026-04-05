@@ -57,7 +57,7 @@ func TestRPCInsertSearchAndDelete(t *testing.T) {
 		t.Fatalf("store.Open() error = %v", err)
 	}
 
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	if _, err := srv.Call(ctx, "insert_text", map[string]any{
 		"collection": "session:test",
@@ -100,7 +100,7 @@ func TestRPCSearchTextCollectionsMergesExactTopKAcrossCollections(t *testing.T) 
 		t.Fatalf("store.Open() error = %v", err)
 	}
 
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	for _, item := range []struct {
 		collection string
@@ -153,7 +153,7 @@ func TestRPCHealthAndListByMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	if _, err := srv.Call(ctx, "insert_text", map[string]any{
 		"collection": "global",
@@ -196,7 +196,7 @@ func TestRPCListCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	if err := st.InsertRecord(ctx, store.AuthoredHardCollection, "AGENTS.md#000001", []float32{0}, map[string]any{
 		"source_doc": "AGENTS.md",
@@ -225,7 +225,7 @@ func TestRPCBumpAccessCountsUpdatesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	if _, err := srv.Call(ctx, "insert_text", map[string]any{
 		"collection": "global",
@@ -270,7 +270,7 @@ func TestRPCUnknownMethodErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	if _, err := srv.Call(ctx, "does_not_exist", nil); err == nil {
 		t.Fatalf("expected unknown method to error")
@@ -283,7 +283,7 @@ func TestRPCMalformedParamsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	if _, err := srv.Call(ctx, "insert_text", "not-an-object"); err == nil {
 		t.Fatalf("expected malformed params to error")
@@ -296,7 +296,7 @@ func TestRPCCompactReturnsStructuredResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, summarize.NewExtractive(fakeEmbedder{}, "extractive"), nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, summarize.NewExtractive(fakeEmbedder{}, "extractive"), nil, st, compact.DefaultGatingConfig(), 500)
 
 	if _, err := srv.Call(ctx, "insert_text", map[string]any{
 		"collection": "session:test",
@@ -342,7 +342,7 @@ func TestRPCGatingScalarReturnsDecomposedSignals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	for i := 0; i < 5; i++ {
 		if err := st.InsertText(ctx, "turns:u1", string(rune('a'+i)), "turn-match", map[string]any{"type": "turn"}); err != nil {
@@ -401,7 +401,7 @@ func TestRPCStatusReportsCountsAndThreshold(t *testing.T) {
 	}
 	cfg := compact.DefaultGatingConfig()
 	cfg.Threshold = 0.42
-	srv := New(fakeEmbedder{}, nil, nil, st, cfg)
+	srv := New(fakeEmbedder{}, nil, nil, st, cfg, 500)
 
 	if err := st.InsertText(ctx, "turns:u1", "t1", "turn-match", map[string]any{"type": "turn"}); err != nil {
 		t.Fatalf("turn insert error = %v", err)
@@ -425,8 +425,107 @@ func TestRPCStatusReportsCountsAndThreshold(t *testing.T) {
 	if status.TurnCount != 1 || status.MemoryCount != 1 {
 		t.Fatalf("unexpected counts: %+v", status)
 	}
+	if status.LifecycleHintCount != 0 {
+		t.Fatalf("unexpected lifecycle count: %+v", status)
+	}
 	if status.GatingThreshold != 0.42 {
 		t.Fatalf("GatingThreshold = %v, want 0.42", status.GatingThreshold)
+	}
+}
+
+func TestRPCSessionLifecycleHintFlushesStore(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.libravdb"), fakeEmbedder{})
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 2)
+
+	if _, err := srv.Call(ctx, "insert_text", map[string]any{
+		"collection": "user:u1",
+		"id":         "u1:1",
+		"text":       "persist me",
+		"metadata":   map[string]any{"userId": "u1"},
+	}); err != nil {
+		t.Fatalf("insert_text error = %v", err)
+	}
+
+	if _, err := srv.Call(ctx, "session_lifecycle_hint", map[string]any{
+		"hook":         "session_end",
+		"sessionId":    "s1",
+		"reason":       "reset",
+		"agentId":      "a1",
+		"messageCount": 4,
+	}); err != nil {
+		t.Fatalf("session_lifecycle_hint error = %v", err)
+	}
+	if _, err := srv.Call(ctx, "session_lifecycle_hint", map[string]any{
+		"hook":         "before_reset",
+		"sessionId":    "s2",
+		"reason":       "new",
+		"agentId":      "a1",
+		"messageCount": 1,
+	}); err != nil {
+		t.Fatalf("second session_lifecycle_hint error = %v", err)
+	}
+	if _, err := srv.Call(ctx, "session_lifecycle_hint", map[string]any{
+		"hook":         "session_end",
+		"sessionId":    "s3",
+		"reason":       "idle",
+		"agentId":      "a1",
+		"messageCount": 2,
+	}); err != nil {
+		t.Fatalf("third session_lifecycle_hint error = %v", err)
+	}
+
+	reloaded, err := store.Open(st.Path(), fakeEmbedder{})
+	if err != nil {
+		t.Fatalf("reload store error = %v", err)
+	}
+
+	results, err := reloaded.ListCollection(ctx, "user:u1")
+	if err != nil {
+		t.Fatalf("reloaded ListCollection error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected flushed record to persist, got %d", len(results))
+	}
+
+	journalRaw, err := srv.Call(ctx, "list_lifecycle_journal", map[string]any{
+		"sessionId": "s2",
+		"limit":     10,
+	})
+	if err != nil {
+		t.Fatalf("list_lifecycle_journal error = %v", err)
+	}
+	journal, ok := journalRaw.(searchTextResult)
+	if !ok {
+		t.Fatalf("expected searchTextResult, got %T", journalRaw)
+	}
+	if len(journal.Results) != 1 {
+		t.Fatalf("expected retained session-specific journal record, got %+v", journal.Results)
+	}
+	if got := journal.Results[0].Metadata["reason"]; got != "new" {
+		t.Fatalf("journal reason = %v, want new", got)
+	}
+
+	allJournalRaw, err := srv.Call(ctx, "list_lifecycle_journal", map[string]any{
+		"limit": 10,
+	})
+	if err != nil {
+		t.Fatalf("list_lifecycle_journal(all) error = %v", err)
+	}
+	allJournal, ok := allJournalRaw.(searchTextResult)
+	if !ok {
+		t.Fatalf("expected searchTextResult, got %T", allJournalRaw)
+	}
+	if len(allJournal.Results) != 2 {
+		t.Fatalf("expected retention cap of 2 journal records, got %+v", allJournal.Results)
+	}
+	for _, item := range allJournal.Results {
+		if item.Metadata["sessionId"] == "s1" {
+			t.Fatalf("expected oldest journal entry for s1 to be pruned, got %+v", allJournal.Results)
+		}
 	}
 }
 
@@ -436,7 +535,7 @@ func TestRPCExportMemoryAndFlushNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
-	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig())
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
 
 	if err := st.InsertText(ctx, "user:u1", "a", "memory-match", map[string]any{"userId": "u1"}); err != nil {
 		t.Fatalf("u1 insert error = %v", err)

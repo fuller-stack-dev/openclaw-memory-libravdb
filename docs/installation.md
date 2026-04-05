@@ -7,7 +7,7 @@ This document is the full installation reference for `@xdarkicex/openclaw-memory
 | Requirement | Minimum | Recommended | Notes |
 |---|---|---|---|
 | Node.js | `22.0.0` | Latest LTS | Enforced in [`package.json`](../package.json) `engines.node` |
-| OpenClaw | `2026.3.22` | Current stable | Pinned by [`package.json`](../package.json) `peerDependencies.openclaw`; this is the earliest local tag confirmed to expose `definePluginEntry`, `registerContextEngine`, `registerMemoryPromptSection`, and the plugin API shape this repo uses |
+| OpenClaw | `2026.3.22` | Current stable | Pinned by [`package.json`](../package.json) `peerDependencies.openclaw`; this is the earliest local tag confirmed to expose `definePluginEntry`, `registerContextEngine`, `registerMemoryPromptSection`, and the base plugin API shape this repo uses. Newer hosts may also expose the optional `registerMemoryRuntime` seam, which this plugin now adopts when available |
 | Go | `1.22` | Latest stable | Required only for local daemon development, not for normal plugin install |
 | Disk | about `1 GB` free for default Nomic install | `2 GB+` if provisioning optional T5 and leaving room for DB growth | See Resource Requirements below |
 | RAM | about `512 MB` for embed-only runtime | `1 GB+` if optional T5 summarizer is provisioned | Based on local RSS measurements below |
@@ -237,6 +237,11 @@ Notes:
 
 - This plugin should own both `memory` and `contextEngine`. Do not assign only one of them.
 - The plugin id is `libravdb-memory`. The npm package name used at install time is `@xdarkicex/openclaw-memory-libravdb`.
+- On newer OpenClaw versions, the plugin also registers a memory runtime bridge so the built-in `memory_search` tool can query libraVDB through the same sidecar-backed retrieval path.
+- On newer OpenClaw versions, the plugin also listens for `before_reset` and `session_end` so it can send best-effort lifecycle hints into the sidecar.
+- Those hints are journaled internally by the sidecar and can be inspected with `openclaw memory journal` without exposing them to normal memory export or recall.
+- The journal keeps only a bounded number of newest entries. Override that cap with `plugins.configs.libravdb-memory.lifecycleJournalMaxEntries` if you need a different retention window.
+- The plugin does not currently register `registerMemoryFlushPlan`; transcript ingest and compaction remain owned by the context-engine lifecycle and the sidecar.
 
 Without a slot entry, OpenClaw's default memory can continue to run in parallel.
 

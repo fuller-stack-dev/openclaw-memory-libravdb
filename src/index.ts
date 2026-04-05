@@ -1,7 +1,9 @@
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { registerMemoryCli } from "./cli.js";
 import { buildContextEngineFactory } from "./context-engine.js";
+import { createBeforeResetHook, createSessionEndHook } from "./lifecycle-hooks.js";
 import { buildMemoryPromptSection } from "./memory-provider.js";
+import { buildMemoryRuntimeBridge } from "./memory-runtime.js";
 import { createRecallCache } from "./recall-cache.js";
 import { createPluginRuntime } from "./plugin-runtime.js";
 import type { PluginConfig, SearchResult } from "./types.js";
@@ -22,6 +24,9 @@ export default definePluginEntry({
       buildContextEngineFactory(runtime.getRpc, cfg, recallCache),
     );
     api.registerMemoryPromptSection(buildMemoryPromptSection(runtime.getRpc, cfg, recallCache));
+    api.registerMemoryRuntime?.(buildMemoryRuntimeBridge(runtime.getRpc, cfg));
+    api.on("before_reset", createBeforeResetHook(runtime, api.logger ?? console));
+    api.on("session_end", createSessionEndHook(runtime, api.logger ?? console));
     api.on("gateway_stop", () => runtime.shutdown());
   },
 });

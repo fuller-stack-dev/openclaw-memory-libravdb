@@ -11,6 +11,7 @@ func TestFromEnvDefaults(t *testing.T) {
 	t.Setenv("LIBRAVDB_EMBEDDING_TOKENIZER", "")
 	t.Setenv("LIBRAVDB_EMBEDDING_DIMENSIONS", "")
 	t.Setenv("LIBRAVDB_EMBEDDING_NORMALIZE", "")
+	t.Setenv("LIBRAVDB_LIFECYCLE_JOURNAL_MAX_ENTRIES", "")
 
 	cfg := FromEnv()
 	if cfg.DBPath == "" {
@@ -31,6 +32,9 @@ func TestFromEnvDefaults(t *testing.T) {
 	if !cfg.EmbeddingNormalize {
 		t.Fatalf("expected normalize=true by default")
 	}
+	if cfg.LifecycleJournalMaxEntries != 500 {
+		t.Fatalf("expected default lifecycle journal max entries 500, got %d", cfg.LifecycleJournalMaxEntries)
+	}
 }
 
 func TestFromEnvReadsPowerUserEmbeddingSettings(t *testing.T) {
@@ -43,6 +47,7 @@ func TestFromEnvReadsPowerUserEmbeddingSettings(t *testing.T) {
 	t.Setenv("LIBRAVDB_EMBEDDING_TOKENIZER", "/models/tokenizer.json")
 	t.Setenv("LIBRAVDB_EMBEDDING_DIMENSIONS", "768")
 	t.Setenv("LIBRAVDB_EMBEDDING_NORMALIZE", "false")
+	t.Setenv("LIBRAVDB_LIFECYCLE_JOURNAL_MAX_ENTRIES", "42")
 
 	cfg := FromEnv()
 	if cfg.DBPath != "/tmp/libravdb" {
@@ -71,5 +76,8 @@ func TestFromEnvReadsPowerUserEmbeddingSettings(t *testing.T) {
 	}
 	if cfg.EmbeddingNormalize {
 		t.Fatalf("expected normalize=false")
+	}
+	if cfg.LifecycleJournalMaxEntries != 42 {
+		t.Fatalf("unexpected lifecycle journal max entries %d", cfg.LifecycleJournalMaxEntries)
 	}
 }

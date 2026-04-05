@@ -410,3 +410,40 @@ function isConfiguredEndpoint(value?: string): boolean {
 }
 
 export { PlaceholderSocket };
+
+export async function probeSidecarEndpoint(cfg: PluginConfig): Promise<string | null> {
+  const endpoint = resolveConfiguredEndpoint(cfg);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      if (isTcpEndpoint(endpoint)) {
+        const address = endpoint.slice("tcp:".length);
+        const separator = address.lastIndexOf(":");
+        if (separator <= 0) {
+          reject(new Error("invalid tcp endpoint"));
+          return;
+        }
+        const host = address.slice(0, separator);
+        const port = Number(address.slice(separator + 1));
+        const socket = net.connect({ host, port }, () => {
+          socket.destroy();
+          resolve();
+        });
+        socket.setTimeout(500);
+        socket.on("error", reject);
+        socket.on("timeout", reject);
+      } else {
+        const socketPath = endpoint.replace(/^unix:/, "");
+        const socket = net.connect(socketPath, () => {
+          socket.destroy();
+          resolve();
+        });
+        socket.setTimeout(500);
+        socket.on("error", reject);
+        socket.on("timeout", reject);
+      }
+    });
+    return endpoint;
+  } catch {
+    return null;
+  }
+}

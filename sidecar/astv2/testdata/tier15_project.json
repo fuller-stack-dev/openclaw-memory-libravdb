@@ -1,0 +1,363 @@
+[
+  {
+    "Name": "project_prefer_spec_pl_over_docx",
+    "Source": "AGENTS.md",
+    "Text": "Use perl spec.pl for all requirement lookups. Never read the .docx.",
+    "expectedTier": "tier0",
+    "ProvenanceClass": "authored_hard",
+    "StabilityWeight": 1.0,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "How do I look up requirements?",
+      "Where do I find the spec?"
+    ],
+    "Reason": "Hard authored rule from AGENTS.md; this is explicitly Tier 0 / authored:hard and should be tracked as a sigma extraction benchmark, not Tier 1.5."
+  },
+  {
+    "Name": "project_session_start_sequence",
+    "Source": "AGENTS.md",
+    "Text": "At the beginning of every normal agent session, run only the non-destructive orientation commands in order.",
+    "expectedTier": "tier0",
+    "ProvenanceClass": "authored_hard",
+    "StabilityWeight": 1.0,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What should I do at the start of a session?",
+      "How do I orient myself in this repo?"
+    ],
+    "Reason": "Hard authored session protocol from AGENTS.md; Tier 0 authored:hard."
+  },
+  {
+    "Name": "project_forbidden_build_commands",
+    "Source": "AGENTS.md",
+    "Text": "Do not run perl tasks-build.pl or perl memory-build.pl unless the user explicitly instructs it.",
+    "expectedTier": "tier0",
+    "ProvenanceClass": "authored_hard",
+    "StabilityWeight": 1.0,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "Can I rebuild the task database?",
+      "What database commands are forbidden?"
+    ],
+    "Reason": "Hard authored prohibition from AGENTS.md; Tier 0 authored:hard."
+  },
+  {
+    "Name": "project_elevated_guidance_model_purpose",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The design goal is: preserve high-value shadow rules that are too weakly structured for AST promotion but too directive to be allowed to decay into lossy summaries or low-trust recalled memory.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "What is the elevated guidance model for?",
+      "What should be preserved at Tier 1.5?"
+    ],
+    "Reason": "Soft authored design intent from elevated-guidance.md; explains the purpose of Tier 1.5 but is metatextual rather than direct operational guidance."
+  },
+  {
+    "Name": "project_elevated_guidance_assembly_order",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The intended prompt precedence is: authored context, recent raw tail, elevated guidance, recalled memories.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What is the assembly order for memory?",
+      "What comes after authored context?",
+      "Where does elevated guidance fit in the prompt?"
+    ],
+    "Reason": "Soft authored architectural contract from elevated-guidance.md; must survive compaction so the assembly order is preserved for future retrieval decisions."
+  },
+  {
+    "Name": "project_elevated_guidance_budget_fraction",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "Let rho_E in (0,1) reserve a fraction of the prompt for elevated guidance.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "How much budget should elevated guidance get?",
+      "What is the elevated guidance token fraction?"
+    ],
+    "Reason": "Soft authored parameter specification; important for budget-aware assembly but mathematical notation that may shift in phrasing during summarization."
+  },
+  {
+    "Name": "project_compaction_deterministic_approximation",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "For the current first implementation, the runtime uses a conservative deterministic approximation that protects deontic-like turns directly and gates them by a stored stability weight.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "How does the compaction protection work?",
+      "What is the deterministic approximation?"
+    ],
+    "Reason": "Soft authored implementation note explaining the Tier 1.5 protection strategy; should survive compaction to guide future implementers about the safety-first approach."
+  },
+  {
+    "Name": "project_model_failure_keep_shards",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "If a local abstractive model is unavailable, slow, or times out, the system must not fail open to deleting potential shadow rules. The safety rule is: model failure implies keep deterministic protected shards.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What happens if the model times out during compaction?",
+      "What is the safety rule for compaction failures?"
+    ],
+    "Reason": "Soft authored safety-critical policy; the failure policy must be preserved verbatim so the safety invariant is not accidentally dropped during future summarization passes."
+  },
+  {
+    "Name": "project_authored_context_wins_on_conflict",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "Tier 1.5 is not a replacement for authored invariants. Authored context still wins on conflict.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What wins if Tier 1.5 conflicts with authored context?",
+      "Is Tier 1.5 above authored invariants?"
+    ],
+    "Reason": "Soft authored trust boundary rule; must survive compaction to prevent future confusion about the trust hierarchy."
+  },
+  {
+    "Name": "project_recalled_memory_untrusted",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "Ordinary recalled memory remains untrusted historical context.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "Is recalled memory trusted guidance?",
+      "How should I treat recalled memories?"
+    ],
+    "Reason": "Soft authored Section 11 safety rule; this is the core trust boundary that must survive compaction so recalled memory is never followed as instructions."
+  },
+  {
+    "Name": "project_contiuity_invariant_tail_boundary",
+    "Source": "docs/continuity.md",
+    "Text": "The recent-tail selection is defined as the shortest base suffix plus optional extension, where the base suffix is sufficient to restore continuity after compaction.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "How is the recent tail boundary selected?",
+      "What is the continuity tail?"
+    ],
+    "Reason": "Soft authored continuity parameter; important for understanding how T_recent is selected but technical enough that verbatim preservation matters less than semantic fidelity."
+  },
+  {
+    "Name": "project_compaction_progress_must_shrink",
+    "Source": "docs/continuity.md",
+    "Text": "CompactSession explicitly declines singleton and non-shrinking clusters.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "When does compaction skip a cluster?",
+      "What is the progress requirement for compaction?"
+    ],
+    "Reason": "Soft authored strict-progress invariant; the explicit 'declines singleton and non-shrinking' language is the safety check and must be preserved verbatim."
+  },
+  {
+    "Name": "project_token_estimator_contract",
+    "Source": "CLAUDE.md",
+    "Text": "The gating subsystem uses sidecar/compact/tokens.go with floor(len(text)/4) clamped to 1, which is a different contract from the prompt-budget estimator.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "What is the token estimation contract?",
+      "How are tokens counted differently in gating vs budget?"
+    ],
+    "Reason": "Soft authored contract clarification from CLAUDE.md gotcha; these two different contracts are easily confused and the distinction must survive compaction."
+  },
+  {
+    "Name": "project_local_model_preservation_gate",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The final admission stage may use a local model only as an additive booster. Model assistance may raise borderline candidates, but it is never the sole deletion-safety gate.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "Can the model be the sole deletion safety gate?",
+      "What is the role of the local model booster?"
+    ],
+    "Reason": "Soft authored safety-invariant from the booster section; the 'never the sole deletion-safety gate' clause is the key invariant and must be preserved verbatim."
+  },
+  {
+    "Name": "project_elevated_guidance_is_advisory_enclave",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "Tier 1.5 is an elevated advisory enclave: stronger than ordinary semantic recall but weaker than authored hard or soft invariants.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "What is the Tier 1.5 elevated guidance model?",
+      "Where does Tier 1.5 fit in the trust hierarchy?"
+    ],
+    "Reason": "Metatextual design description of what Tier 1.5 is; describes the architectural role rather than issuing operational directives. No guidance surface hints and no prototype overlap."
+  },
+  {
+    "Name": "project_shadow_rules_definition",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "Shadow rules are guidance too weakly structured for AST promotion but too directive to be allowed to decay into lossy summaries or low-trust recalled memory.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "What are shadow rules in Tier 1.5?",
+      "Why are some rules called shadow rules?"
+    ],
+    "Reason": "Metatextual definition of the 'shadow rules' concept; describes what they are rather than prescribing what to do. No guidance surface hints. No prototype overlap."
+  },
+  {
+    "Name": "project_elevated_budget_formula",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The effective elevated-guidance token mass is the minimum of the sum of token counts for admitted elevated records and the reserved budget fraction rho_E times the total prompt budget.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "none",
+    "QueryPrompts": [
+      "How is the elevated guidance budget computed?",
+      "What is the formula for the elevated guidance token mass?"
+    ],
+    "Reason": "Mathematical budget formula describing how the elevated guidance token budget is computed. Pure notation and descriptive prose; no guidance surface hints. Formulas should not be elevated as operational directives."
+  },
+  {
+    "Name": "project_continuity_model_formula",
+    "Source": "docs/continuity.md",
+    "Text": "The continuity model C_total(q) is defined as the union of authored invariants, recent raw tail T_recent, soft invariants, admitted elevated guidance E*(q), and the projection of the remaining variant corpus Proj(V_rest,q).",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "none",
+    "QueryPrompts": [
+      "What is the continuity model formula?",
+      "How is the total continuity context assembled?"
+    ],
+    "Reason": "Mathematical definition of the continuity model; purely descriptive set-union notation. No guidance surface hints. Formulas should not be elevated as operational directives."
+  },
+  {
+    "Name": "project_protected_shard_persistence",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "Protected records survive verbatim as elevated-guidance records in durable namespaces rather than being melted into cluster summaries.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "Where do protected records end up after compaction?",
+      "What happens to shards during compaction?"
+    ],
+    "Reason": "Implementation narrative describing what happens to protected shards during compaction. 'Survive verbatim' describes a system behavior, not a directive to follow. No guidance surface hints."
+  },
+  {
+    "Name": "project_assembly_precedence_description",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The intended prompt precedence is: authored context first, then recent raw tail, then elevated guidance, then recalled memories last.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "What comes before recalled memories in the prompt?",
+      "What is the last section of the memory prompt?"
+    ],
+    "Reason": "Describes the prompt assembly precedence as a factual ordering rather than an instruction. 'Authored context first' is descriptive, not a command to follow. No guidance surface hints."
+  },
+  {
+    "Name": "project_residual_budget_formula",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The residual variant budget is the total prompt budget minus the costs of authored context, recent tail, soft invariants, and the admitted elevated guidance set.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "none",
+    "QueryPrompts": [
+      "How is the residual budget for variant recall computed?",
+      "What budget remains after elevated guidance?"
+    ],
+    "Reason": "Mathematical budget subtraction formula describing how the residual variant budget is calculated. No guidance surface hints. Formulas should not be elevated as operational directives."
+  },
+  {
+    "Name": "project_additive_booster_pattern",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The additive booster pattern uses a local model to raise borderline candidates through semantic similarity scoring while leaving the deterministic path authoritative.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "What is the additive booster pattern?",
+      "How does the booster interact with the deterministic path?"
+    ],
+    "Reason": "Implementation narrative describing how the additive booster works architecturally. 'Raising borderline candidates' describes a mechanism, not an instruction. No guidance surface hints."
+  },
+  {
+    "Name": "project_tier15_between_invariants_and_recall",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The elevated-guidance path is therefore stronger than ordinary semantic recall but weaker than authored hard or soft invariants, and assembled separately from recalled memory.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "How does elevated guidance compare to recalled memory?",
+      "Is elevated guidance stronger than semantic recall?"
+    ],
+    "Reason": "Metatextual description of where Tier 1.5 sits in the trust hierarchy. Describes the relative strength of elevated guidance versus other context types. No guidance surface hints."
+  },
+  {
+    "Name": "project_tier15_architecture_summary",
+    "Source": "docs/elevated-guidance.md",
+    "Text": "The design goal is: preserve high-value shadow rules that are too weakly structured for AST promotion but too directive to be allowed to decay into lossy summaries or low-trust recalled memory. This is the Tier 1.5 elevated-guidance mission statement.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.75,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "What is the mission of Tier 1.5 elevated guidance?",
+      "What problem does the elevated guidance model solve?"
+    ],
+    "Reason": "Metatextual mission-statement description of Tier 1.5's purpose. 'The design goal is' frames this as descriptive rather than prescriptive. This is the broader architectural context, not an operational directive to follow."
+  }
+]

@@ -61,6 +61,22 @@ func TestEvaluateTextPromotesSecondPersonImperatives(t *testing.T) {
 		{name: "passive tests should be run", text: "Tests should be run with pytest.", want: ModalityObligation},
 		{name: "narrative you must imagine filtered", text: "To understand the scene, you must imagine the tower collapsing.", want: ModalityNone},
 		{name: "narrative you should picture filtered", text: "In the old tale, you should picture a harbor at sunrise.", want: ModalityNone},
+		{name: "metatextual design goal preserve filtered", text: "The design goal is: preserve high-value shadow rules that are too weakly structured for AST promotion.", want: ModalityNone},
+		// Setup-clause + imperative patterns (detectSetupImperative).
+		// "to get X running... then run Y" — imperative after "then".
+		{name: "setup to get then run imperative", text: "to get the nanite project running just make sure you have odin and go installed then run odin build src -out:nanite-test -o:speed to get the binary.", want: ModalityObligation},
+		// "the tests are in folder,run them" — imperative directly after comma (no space).
+		{name: "setup folder comma run imperative", text: "the tests are in the tests folder,run them with go test ./... but make sure you have the ebpf permissions set up or they will fail.", want: ModalityObligation},
+		// Corpus-shaped setup prose without comma punctuation.
+		{name: "setup if you hit check imperative", text: "if you hit a wall with the slabby memory plugin check the docs folder first before asking the user for help.", want: ModalityObligation},
+		{name: "setup if you need check imperative", text: "if you need to update the slabby logic check the internal/vector folder but don't change the memory alignment or you'll break the simd optimizations.", want: ModalityObligation | ModalityForbidden},
+		// Negative controls: connective rules should NOT fire on generic descriptive prose.
+		// "then" without imperative verb following — no promotion.
+		{name: "setup_then_descriptive_no_promote", text: "The system then records the event for later review.", want: ModalityNone},
+		// "but" without imperative verb following — no promotion.
+		{name: "setup_but_descriptive_no_promote", text: "The design is simple, but the overview is descriptive.", want: ModalityNone},
+		// Comma-separated clause without imperative verb — no promotion.
+		{name: "setup_comma_descriptive_no_promote", text: "The folder, which contains examples, is public.", want: ModalityNone},
 	}
 
 	frame := NewDeonticFrame()

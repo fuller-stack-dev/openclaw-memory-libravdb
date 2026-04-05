@@ -463,24 +463,81 @@ func partitionProtectedTurns(ctx context.Context, turns []turnRecord, frame *ast
 	return protected, compressible
 }
 
-func isProtectedGuidanceTurn(ctx context.Context, turn turnRecord, frame *astv2.DeonticFrame, guidanceEmbedder embed.Embedder) bool {
-	if frame == nil {
-		return false
-	}
+// GuidanceEvalTrace records the per-gate decision trace for a single turn evaluated
+// by the Tier 1.5 protection path. Used for debugging false positives and tuning.
+type GuidanceEvalTrace struct {
+	TurnText          string
+	StabilityWeight   float64
+	StabilityOK       bool
+	SigmaPromoted     bool
+	SigmaMask         uint8
+	SurfaceHintMatched bool
+	BoosterSimilarity float64
+	BoosterAdmitted   bool
+	FinalAdmission    bool
+	AdmissionPath     string // "sigma", "booster", or "none"
+}
+
+// evaluateProtectedGuidanceTurn is the internal evaluator that returns both the
+// boolean decision and the full trace struct. Production callers use the bool;
+// tests assert on the trace.
+func evaluateProtectedGuidanceTurn(ctx context.Context, turn turnRecord, frame *astv2.DeonticFrame, guidanceEmbedder embed.Embedder) (bool, GuidanceEvalTrace) {
 	text := strings.TrimSpace(turn.text)
-	if text == "" {
-		return false
+	stability := stabilityWeight(turn.metadata)
+
+	trace := GuidanceEvalTrace{
+		TurnText:        text,
+		StabilityWeight: stability,
 	}
-	if stabilityWeight(turn.metadata) < ElevatedGuidanceMinStability {
-		return false
+
+	if frame == nil || text == "" {
+		trace.AdmissionPath = "none"
+		return false, trace
 	}
-	if frame.EvaluateText([]byte(text)).Promoted {
-		return true
+
+	trace.StabilityOK = stability >= ElevatedGuidanceMinStability
+	if !trace.StabilityOK {
+		trace.AdmissionPath = "none"
+		return false, trace
 	}
-	if !hasGuidanceSurfaceHint(text) {
-		return false
+
+	eval := frame.EvaluateText([]byte(text))
+	trace.SigmaPromoted = eval.Promoted
+	trace.SigmaMask = uint8(eval.Mask)
+
+	if eval.Promoted {
+		trace.FinalAdmission = true
+		trace.AdmissionPath = "sigma"
+		return true, trace
 	}
-	return semanticGuidanceBooster(ctx, guidanceEmbedder, text) >= ElevatedGuidanceBoosterFloor
+
+	trace.SurfaceHintMatched = hasGuidanceSurfaceHint(text)
+	if !trace.SurfaceHintMatched {
+		trace.AdmissionPath = "none"
+		trace.FinalAdmission = false
+		return false, trace
+	}
+
+	sim := semanticGuidanceBooster(ctx, guidanceEmbedder, text)
+	trace.BoosterSimilarity = sim
+	trace.BoosterAdmitted = sim >= ElevatedGuidanceBoosterFloor
+
+	if trace.BoosterAdmitted {
+		trace.FinalAdmission = true
+		trace.AdmissionPath = "booster"
+		return true, trace
+	}
+
+	trace.AdmissionPath = "none"
+	trace.FinalAdmission = false
+	return false, trace
+}
+
+// isProtectedGuidanceTurn is the production boolean gate. Internally it calls
+// evaluateProtectedGuidanceTurn and discards the trace.
+func isProtectedGuidanceTurn(ctx context.Context, turn turnRecord, frame *astv2.DeonticFrame, guidanceEmbedder embed.Embedder) bool {
+	ok, _ := evaluateProtectedGuidanceTurn(ctx, turn, frame, guidanceEmbedder)
+	return ok
 }
 
 func persistProtectedGuidanceShards(

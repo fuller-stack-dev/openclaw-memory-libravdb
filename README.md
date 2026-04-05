@@ -9,7 +9,12 @@ daemon, keeps recent work intact, and promotes durable memory only when the
 signal is strong enough to matter.
 
 ## Install and Lifecycle
-
+```bash
+  brew tap xDarkicex/openclaw-libravdb-memory
+  brew install libravdbd
+  brew services start libravdbd
+  openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+```
 - [Install guide](./docs/install.md) for Homebrew, OpenClaw / OpenClaw.ai plugin setup, and manual daemon lifecycle.
 - [Uninstall guide](./docs/uninstall.md) for clean plugin removal, daemon shutdown, and optional data cleanup.
 - [Full installation reference](./docs/installation.md) for deeper operational detail, troubleshooting, and packaging notes.

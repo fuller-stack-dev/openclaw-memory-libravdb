@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/astv2"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/embed"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/store"
 	"github.com/xDarkicex/openclaw-memory-libravdb/sidecar/summarize"
@@ -1343,5 +1344,104 @@ func assertBoundedSummaryMeta(t *testing.T, meta map[string]any) {
 	}
 	if decay < 0 || decay > 1 {
 		t.Fatalf("expected decay_rate in [0,1], got %f", decay)
+	}
+}
+
+// TestMetatextualDesignProseNotElevatedViaDeontic verifies that design-intent
+// metatextual prose does not elevate via the sigma/deontic path just because it
+// contains a word like "preserve" or "design" that appears in the imperative verb list.
+//
+// Specifically tests the project corpus false positive:
+//   - Text: "The design goal is: preserve high-value shadow rules that are too weakly
+//     structured for AST promotion but too directive to be allowed to decay into lossy
+//     summaries or low-trust recalled memory."
+//   - Root cause: "preserve" is in isImperativeVerb and triggers detectBareImperative
+//     at sentence start, making the deontic frame set Promoted=true for a sentence
+//     that is actually describing a design goal, not issuing an operational directive.
+//
+// The fix belongs in the deontic frame's narrative-rhetoric filter, not threshold tuning.
+func TestMetatextualDesignProseNotElevatedViaDeontic(t *testing.T) {
+	const metatextualText = "The design goal is: preserve high-value shadow rules that are too weakly structured for AST promotion but too directive to be allowed to decay into lossy summaries or low-trust recalled memory."
+
+	turn := turnRecord{
+		id:   "meta",
+		text: metatextualText,
+		metadata: map[string]any{
+			"type":             "turn",
+			"sessionId":        "s1",
+			"userId":           "u1",
+			"ts":               int64(10),
+			"stability_weight": 0.9,
+			"provenance_class": "session_turn",
+		},
+	}
+
+	deonticFrame := astv2.NewDeonticFrame()
+	zeroEmb := &fakeEmbedder{vectors: map[string][]float32{}}
+	admitted, trace := evaluateProtectedGuidanceTurn(context.Background(), turn, deonticFrame, zeroEmb)
+
+	// The deontic frame should NOT promote this text.
+	// If it does (sigma_promoted=true), it means "preserve" or "design" is being treated
+	// as a bare imperative in a metatextual "design goal is: preserve X" construction.
+	if admitted {
+		t.Errorf("metatextual prose incorrectly admitted via %s: sigma_promoted=%v mask=%d surface_hint=%v booster_sim=%.4f\ntext: %.80q...",
+			trace.AdmissionPath, trace.SigmaPromoted, trace.SigmaMask, trace.SurfaceHintMatched,
+			trace.BoosterSimilarity, metatextualText)
+	}
+}
+
+// TestGuidanceSurfaceHintAndBoosterMetatextualProse verifies that design-intent
+// metatextual prose containing guidance-like surface words (e.g. "shadow rules",
+// "should", "use") but lacking direct operational directives does not elevate via
+// the booster path. The booster path requires both a surface hint AND prototype
+// similarity >= ElevatedGuidanceBoosterFloor.
+func TestGuidanceSurfaceHintAndBoosterMetatextualProse(t *testing.T) {
+	// Texts that contain guidance-related words but are fundamentally metatextual.
+	metatextualCases := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "design_goal_is_preserve",
+			text: "The design goal is: preserve high-value shadow rules that are too weakly structured for AST promotion.",
+		},
+		{
+			name: "assembly_order_describes_precedence",
+			text: "The intended prompt precedence is: authored context, recent raw tail, elevated guidance, recalled memories.",
+		},
+		{
+			name: "failure_policy_describes_safety",
+			text: "If a local abstractive model is unavailable, slow, or times out, the system must not fail open to deleting potential shadow rules.",
+		},
+	}
+
+	deonticFrame := astv2.NewDeonticFrame()
+
+	// Use a zero embedder so booster similarity is always 0.
+	zeroEmb := &fakeEmbedder{vectors: map[string][]float32{}}
+
+	for _, tc := range metatextualCases {
+		t.Run(tc.name, func(t *testing.T) {
+			turn := turnRecord{
+				id:   tc.name,
+				text: tc.text,
+				metadata: map[string]any{
+					"type":             "turn",
+					"sessionId":        "s1",
+					"userId":           "u1",
+					"ts":               int64(10),
+					"stability_weight": 0.9,
+					"provenance_class": "session_turn",
+				},
+			}
+
+			admitted, trace := evaluateProtectedGuidanceTurn(context.Background(), turn, deonticFrame, zeroEmb)
+
+			if admitted {
+				t.Errorf("metatextual prose incorrectly admitted via %s: sigma_promoted=%v surface_hint=%v booster_sim=%.4f\ntext: %.60q...",
+					trace.AdmissionPath, trace.SigmaPromoted, trace.SurfaceHintMatched,
+					trace.BoosterSimilarity, tc.text)
+			}
+		})
 	}
 }

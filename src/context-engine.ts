@@ -38,6 +38,15 @@ export function buildContextEngineFactory(
   let authoredSoftCache: SearchResult[] | null = null;
   let authoredVariantCache: SearchResult[] | null = null;
 
+  // Session-scoped elevated-guidance cache keyed by sessionId + generation + userId + queryText
+  const elevatedRecallCache = new Map<string, SearchResult[]>();
+  const elevatedRecallGeneration = new Map<string, number>();
+
+  function clearElevatedCacheForSession(sessionId: string) {
+    const nextGeneration = (elevatedRecallGeneration.get(sessionId) ?? 0) + 1;
+    elevatedRecallGeneration.set(sessionId, nextGeneration);
+  }
+
   return {
     ownsCompaction: true,
     async bootstrap({ sessionId, userId }: ContextBootstrapArgs) {
@@ -80,6 +89,8 @@ export function buildContextEngineFactory(
         provenance_class: "session_turn",
         stability_weight: stabilityWeightForMessage(message.role),
       };
+      // Elevated cache is session-scoped, so invalidate immediately on every ingest
+      clearElevatedCacheForSession(sessionId);
       void rpc.call("insert_text", {
         collection: `session:${sessionId}`,
         id: `${sessionId}:${ts}`,
@@ -139,6 +150,8 @@ export function buildContextEngineFactory(
       return { ingested: true };
     },
     async assemble({ sessionId, userId, messages, tokenBudget }: ContextAssembleArgs) {
+      const PROFILE = process.env.OPENCLAW_PROFILE_ASSEMBLE === "1";
+
       const queryText = messages.at(-1)?.content ?? "";
       if (!queryText) {
         return {
@@ -149,190 +162,72 @@ export function buildContextEngineFactory(
       }
 
       const excluded = recentIds(messages, 4);
-      const cached = recallCache.get({ userId, queryText });
+      const cached = recallCache.take({ userId, queryText });
 
-      try {
-        const rpc = await getRpc();
-        const [authoredHard, authoredSoft, authoredVariantRecords] = await loadAuthoredCollections(rpc, {
+      const rpc = await getRpc();
+
+      // Use cached authored collections directly if available (bootstrap-loaded and sorted)
+      // Only load as fallback if caches are unexpectedly null
+      let authoredHard = authoredHardCache;
+      let authoredSoft = authoredSoftCache;
+      let authoredVariantRecords = authoredVariantCache;
+      if (!authoredHard || !authoredSoft || !authoredVariantRecords) {
+        const [loadedHard, loadedSoft, loadedVariant] = await loadAuthoredCollections(rpc, {
           hard: authoredHardCache,
           soft: authoredSoftCache,
           variant: authoredVariantCache,
         });
-        authoredHardCache = authoredHard;
-        authoredSoftCache = authoredSoft;
-        authoredVariantCache = authoredVariantRecords;
+        authoredHard = loadedHard;
+        authoredSoft = loadedSoft;
+        authoredVariantRecords = loadedVariant;
+        authoredHardCache = loadedHard;
+        authoredSoftCache = loadedSoft;
+        authoredVariantCache = loadedVariant;
+      }
 
-        const memoryBudget = tokenBudget * (cfg.tokenBudgetFraction ?? 0.25);
-        const hardItems = authoredHard;
-        const hardUsed = tokenCostSum(hardItems);
-        const sessionRecords = await rpc.call<{ results: SearchResult[] }>("list_by_meta", {
-          collection: `session:${sessionId}`,
-          key: "sessionId",
-          value: sessionId,
+      // Profiler: null when disabled (zero overhead), object when enabled
+      const profiler = PROFILE
+        ? (() => {
+            const marks: Array<[string, bigint]> = [];
+            return {
+              mark(label: string) {
+                marks.push([label, process.hrtime.bigint()]);
+              },
+              emit() {
+                for (let i = 0; i < marks.length - 1; i++) {
+                  const [name, start] = marks[i];
+                  const [, end] = marks[i + 1];
+                  const ms = Number(end - start) / 1_000_000;
+                  console.log(`assemble profile: ${name}=${ms.toFixed(2)}ms`);
+                }
+              },
+            };
+          })()
+        : null;
+
+      try {
+        const result = await this.assembleCore({
+          rpc,
+          cfg,
+          recallCache,
+          authoredHard,
+          authoredSoft,
+          authoredVariantRecords,
+          cached,
+          excluded,
+          queryText,
+          sessionId,
+          userId,
+          messages,
+          tokenBudget,
+          profiler,
         });
-        const rawSessionTurns = sortChronological(
-          sessionRecords.results.filter((item) =>
-            item.metadata.type !== "summary" && item.metadata.type !== "guidance_shard"
-          ),
-        );
-        const minTurns = cfg.continuityMinTurns ?? DEFAULT_CONTINUITY_MIN_TURNS;
-        const tailTarget = cfg.continuityTailBudgetTokens ?? DEFAULT_CONTINUITY_TAIL_BUDGET_TOKENS;
-        const baseTail = selectRecentTail(rawSessionTurns, {
-          minTurns,
-          tailBudgetTokens: 0,
-          tokenCost,
-          sameBundle: isContinuityBundleCoupled,
-        });
-        const baseTailUsed = baseTail.baseTokens;
-        const configuredHardFraction = clampFraction(cfg.authoredHardBudgetFraction);
-        const hardBudget = configuredHardFraction > 0 ? memoryBudget * configuredHardFraction : hardUsed;
-        const degradedReasons: string[] = [];
-        if (hardUsed > hardBudget + 1e-9) {
-          degradedReasons.push("hard authored invariants exceed configured hard budget reserve");
-        }
-        if (hardUsed + baseTailUsed > memoryBudget + 1e-9) {
-          degradedReasons.push("hard authored invariants plus mandatory recent-tail base exceed available memory budget");
-        }
-        if (degradedReasons.length > 0) {
-          const degradedTail = markRecentTail(baseTail.base, baseTail.base.length);
-          const selected = [...hardItems, ...degradedTail];
-          const selectedMessages = selected.map((item) => ({
-            role: "system",
-            content: buildInjectedMemoryMessageContent(item),
-          }));
-          return {
-            messages: [...selectedMessages, ...messages],
-            estimatedTokens: countTokens(selectedMessages) + countTokens(messages),
-            systemPromptAddition: buildDegradedMemoryHeader(degradedReasons, selected),
-          };
-        }
-        const authoredSoftTarget = Math.max(0, memoryBudget * (cfg.authoredSoftBudgetFraction ?? 0.3));
-        const softBudget = Math.max(0, Math.min(authoredSoftTarget, memoryBudget - hardUsed - baseTailUsed));
-        const softItems = fitPromptBudget(authoredSoft, softBudget);
-        const remainingAfterHardSoft = Math.max(0, memoryBudget - hardUsed - tokenCostSum(softItems));
-        const effectiveTailBudget = Math.min(
-          Math.max(tailTarget, baseTailUsed),
-          remainingAfterHardSoft,
-        );
-        const recentTailSelection = selectRecentTail(rawSessionTurns, {
-          minTurns,
-          tailBudgetTokens: effectiveTailBudget,
-          tokenCost,
-          sameBundle: isContinuityBundleCoupled,
-        });
-        const recentTail = markRecentTail(
-          recentTailSelection.recent,
-          recentTailSelection.base.length,
-        );
-        const tailBaseItems = recentTail.slice(-recentTailSelection.base.length);
-        const tailExtensionItems = recentTail.slice(0, Math.max(0, recentTail.length - recentTailSelection.base.length));
-        const retrievalBudget = Math.max(0, memoryBudget - hardUsed - tokenCostSum(softItems) - tokenCostSum(recentTail));
-        const recentTailIDs = recentTail.map((item) => item.id);
 
-        const coarseTopK = Math.max(cfg.section7CoarseTopK ?? Math.max((cfg.topK ?? 8) * 2, 8), 1);
-        const secondPassTopK = Math.max(cfg.section7SecondPassTopK ?? (cfg.topK ?? 8), 1);
-        const [sessionHits, durableHits, elevatedHits] = await Promise.all([
-          rpc.call<{ results: SearchResult[] }>("search_text", {
-            collection: `session:${sessionId}`,
-            text: queryText,
-            k: coarseTopK,
-            excludeIds: [...excluded, ...recentTailIDs],
-          }),
-          cached
-            ? Promise.resolve({ results: cached.durableVariantHits })
-            : rpc.call<{ results: SearchResult[] }>("search_text_collections", {
-                collections: [`user:${userId}`, "global", AUTHORED_VARIANT_COLLECTION],
-                text: queryText,
-                k: coarseTopK,
-                excludeByCollection: {},
-              }),
-          rpc.call<{ results: SearchResult[] }>("search_text_collections", {
-            collections: [
-              `${ELEVATED_USER_COLLECTION_PREFIX}${userId}`,
-              `${ELEVATED_SESSION_COLLECTION_PREFIX}${sessionId}`,
-            ],
-            text: queryText,
-            k: coarseTopK,
-            excludeByCollection: {},
-          }),
-        ]);
-
-        if (!cached) {
-          recallCache.put({
-            userId,
-            queryText,
-            durableVariantHits: durableHits.results,
-          });
+        if (profiler) {
+          profiler.emit();
         }
 
-        const ranked = rankSection7VariantCandidates(
-          [
-            ...annotateCollection(sessionHits.results, `session:${sessionId}`),
-            ...elevatedHits.results,
-            ...durableHits.results,
-          ],
-          {
-            queryText,
-            k1: coarseTopK,
-            k2: secondPassTopK,
-            theta1: cfg.section7Theta1,
-            kappa: cfg.section7Kappa,
-            authorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
-            authorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
-            authorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
-            authorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
-            sessionId,
-            userId,
-          },
-        );
-        const hopExpanded = expandSection7HopCandidates(
-          ranked,
-          annotateCollection(authoredVariantRecords, AUTHORED_VARIANT_COLLECTION),
-          {
-            etaHop: cfg.section7HopEta,
-            thetaHop: cfg.section7HopThreshold,
-          },
-        );
-
-        const mergedCandidates = mergeSection7VariantCandidates(ranked, hopExpanded);
-        const elevatedGuidanceBudget = Math.max(
-          0,
-          Math.min(
-            memoryBudget * (cfg.elevatedGuidanceBudgetFraction ?? 0.15),
-            retrievalBudget,
-          ),
-        );
-        const elevatedItems = fitPromptBudget(
-          mergedCandidates.filter((item) => item.metadata.elevated_guidance === true),
-          elevatedGuidanceBudget,
-        );
-        const remainingAfterElevated = Math.max(0, retrievalBudget - tokenCostSum(elevatedItems));
-        const variantItems = fitPromptBudget(
-          mergedCandidates.filter((item) => item.metadata.elevated_guidance !== true),
-          remainingAfterElevated,
-        );
-        const selected = [
-          ...hardItems,
-          ...tailBaseItems,
-          ...softItems,
-          ...tailExtensionItems,
-          ...elevatedItems,
-          ...variantItems,
-        ];
-        void rpc.call("bump_access_counts", {
-          updates: groupAccessCountUpdates([...elevatedItems, ...variantItems]),
-        }).catch(() => {});
-
-        const selectedMessages = selected.map((item) => ({
-          role: "system",
-          content: buildInjectedMemoryMessageContent(item),
-        }));
-
-        return {
-          messages: [...selectedMessages, ...messages],
-          estimatedTokens: countTokens(selectedMessages) + countTokens(messages),
-          systemPromptAddition: buildMemoryHeader(selected),
-        };
+        return result;
       } catch {
         return {
           messages,
@@ -340,6 +235,257 @@ export function buildContextEngineFactory(
           systemPromptAddition: "",
         };
       }
+    },
+    async assembleCore({
+      rpc,
+      cfg,
+      recallCache,
+      authoredHard,
+      authoredSoft,
+      authoredVariantRecords,
+      cached,
+      excluded,
+      queryText,
+      sessionId,
+      userId,
+      messages,
+      tokenBudget,
+      profiler,
+    }: {
+      rpc: Awaited<ReturnType<RpcGetter>>;
+      cfg: PluginConfig;
+      recallCache: RecallCache<SearchResult>;
+      authoredHard: SearchResult[];
+      authoredSoft: SearchResult[];
+      authoredVariantRecords: SearchResult[];
+      cached: ReturnType<RecallCache<SearchResult>["take"]>;
+      excluded: string[];
+      queryText: string;
+      sessionId: string;
+      userId: string;
+      messages: Array<{ role: string; content: string }>;
+      tokenBudget: number;
+      profiler: { mark(label: string): void; emit(): void } | null;
+    }): Promise<{
+      messages: Array<{ role: string; content: string }>;
+      estimatedTokens: number;
+      systemPromptAddition: string;
+    }> {
+      const memoryBudget = tokenBudget * (cfg.tokenBudgetFraction ?? 0.25);
+      const hardItems = authoredHard;
+      const hardUsed = tokenCostSum(hardItems);
+
+      profiler?.mark("session");
+      const sessionRecords = await rpc.call<{ results: SearchResult[] }>("list_by_meta", {
+        collection: `session:${sessionId}`,
+        key: "sessionId",
+        value: sessionId,
+      });
+      const rawSessionTurns = sortChronological(
+        sessionRecords.results.filter((item) =>
+          item.metadata.type !== "summary" && item.metadata.type !== "guidance_shard"
+        ),
+      );
+      const minTurns = cfg.continuityMinTurns ?? DEFAULT_CONTINUITY_MIN_TURNS;
+      const tailTarget = cfg.continuityTailBudgetTokens ?? DEFAULT_CONTINUITY_TAIL_BUDGET_TOKENS;
+      const baseTail = selectRecentTail(rawSessionTurns, {
+        minTurns,
+        tailBudgetTokens: 0,
+        tokenCost,
+        sameBundle: isContinuityBundleCoupled,
+      });
+      const baseTailUsed = baseTail.baseTokens;
+      const configuredHardFraction = clampFraction(cfg.authoredHardBudgetFraction);
+      const hardBudget = configuredHardFraction > 0 ? memoryBudget * configuredHardFraction : hardUsed;
+      const degradedReasons: string[] = [];
+      if (hardUsed > hardBudget + 1e-9) {
+        degradedReasons.push("hard authored invariants exceed configured hard budget reserve");
+      }
+      if (hardUsed + baseTailUsed > memoryBudget + 1e-9) {
+        degradedReasons.push("hard authored invariants plus mandatory recent-tail base exceed available memory budget");
+      }
+      if (degradedReasons.length > 0) {
+        const degradedTail = markRecentTail(baseTail.base, baseTail.base.length);
+        const selected = [...hardItems, ...degradedTail];
+        const selectedMessages = selected.map((item) => ({
+          role: "system",
+          content: buildInjectedMemoryMessageContent(item),
+        }));
+        return {
+          messages: [...selectedMessages, ...messages],
+          estimatedTokens: countTokens(selectedMessages) + countTokens(messages),
+          systemPromptAddition: buildDegradedMemoryHeader(degradedReasons, selected),
+        };
+      }
+      const authoredSoftTarget = Math.max(0, memoryBudget * (cfg.authoredSoftBudgetFraction ?? 0.3));
+      const softBudget = Math.max(0, Math.min(authoredSoftTarget, memoryBudget - hardUsed - baseTailUsed));
+      const softItems = fitPromptBudget(authoredSoft, softBudget);
+      const remainingAfterHardSoft = Math.max(0, memoryBudget - hardUsed - tokenCostSum(softItems));
+      const effectiveTailBudget = Math.min(
+        Math.max(tailTarget, baseTailUsed),
+        remainingAfterHardSoft,
+      );
+      const recentTailSelection = selectRecentTail(rawSessionTurns, {
+        minTurns,
+        tailBudgetTokens: effectiveTailBudget,
+        tokenCost,
+        sameBundle: isContinuityBundleCoupled,
+      });
+      const recentTail = markRecentTail(
+        recentTailSelection.recent,
+        recentTailSelection.base.length,
+      );
+      const tailBaseItems = recentTail.slice(-recentTailSelection.base.length);
+      const tailExtensionItems = recentTail.slice(0, Math.max(0, recentTail.length - recentTailSelection.base.length));
+      const retrievalBudget = Math.max(0, memoryBudget - hardUsed - tokenCostSum(softItems) - tokenCostSum(recentTail));
+      const recentTailIDs = recentTail.map((item) => item.id);
+
+      const coarseTopK = Math.max(cfg.section7CoarseTopK ?? Math.max((cfg.topK ?? 8) * 2, 8), 1);
+      const secondPassTopK = Math.max(cfg.section7SecondPassTopK ?? (cfg.topK ?? 8), 1);
+
+      profiler?.mark("session_search");
+      const [sessionHits] = await Promise.all([
+        rpc.call<{ results: SearchResult[] }>("search_text", {
+          collection: `session:${sessionId}`,
+          text: queryText,
+          k: coarseTopK,
+          excludeIds: [...excluded, ...recentTailIDs],
+        }),
+      ]);
+
+      profiler?.mark("recall_user_global");
+      const [userHits, globalHits] = await Promise.all([
+        cached?.userHits
+          ? Promise.resolve({ results: cached.userHits })
+          : rpc.call<{ results: SearchResult[] }>("search_text", {
+              collection: `user:${userId}`,
+              text: queryText,
+              k: Math.ceil((cfg.topK ?? 8) / 2),
+            }),
+        cached?.globalHits
+          ? Promise.resolve({ results: cached.globalHits })
+          : rpc.call<{ results: SearchResult[] }>("search_text", {
+              collection: "global",
+              text: queryText,
+              k: Math.ceil((cfg.topK ?? 8) / 4),
+            }),
+      ]);
+
+      if (!cached) {
+        recallCache.put({
+          userId,
+          queryText,
+          durableVariantHits: [],
+          userHits: userHits.results,
+          globalHits: globalHits.results,
+        });
+      }
+
+      profiler?.mark("recall_authored_variant");
+      const [authoredVariantHits] = await Promise.all([
+        rpc.call<{ results: SearchResult[] }>("search_text", {
+          collection: AUTHORED_VARIANT_COLLECTION,
+          text: queryText,
+          k: coarseTopK,
+        }),
+      ]);
+
+      profiler?.mark("recall_elevated");
+      const elevatedGeneration = elevatedRecallGeneration.get(sessionId) ?? 0;
+      const elevatedKey = `${sessionId}\n${elevatedGeneration}\n${userId}\n${queryText}`;
+      const cachedElevated = elevatedRecallCache.get(elevatedKey);
+      const [elevatedHits] = await Promise.all([
+        cachedElevated
+          ? Promise.resolve({ results: cachedElevated })
+          : rpc.call<{ results: SearchResult[] }>("search_text_collections", {
+              collections: [
+                `${ELEVATED_USER_COLLECTION_PREFIX}${userId}`,
+                `${ELEVATED_SESSION_COLLECTION_PREFIX}${sessionId}`,
+              ],
+              text: queryText,
+              k: coarseTopK,
+              excludeByCollection: {},
+            }),
+      ]);
+      if (!cachedElevated) {
+        elevatedRecallCache.set(elevatedKey, elevatedHits.results);
+      }
+
+      profiler?.mark("rank");
+      const ranked = rankSection7VariantCandidates(
+        [
+          ...annotateCollection(sessionHits.results, `session:${sessionId}`),
+          ...elevatedHits.results,
+          ...userHits.results,
+          ...globalHits.results,
+          ...authoredVariantHits.results,
+        ],
+        {
+          queryText,
+          k1: coarseTopK,
+          k2: secondPassTopK,
+          theta1: cfg.section7Theta1,
+          kappa: cfg.section7Kappa,
+          authorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
+          authorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
+          authorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
+          authorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
+          sessionId,
+          userId,
+        },
+      );
+
+      profiler?.mark("hop");
+      const hopExpanded = expandSection7HopCandidates(
+        ranked,
+        annotateCollection(authoredVariantRecords, AUTHORED_VARIANT_COLLECTION),
+        {
+          etaHop: cfg.section7HopEta,
+          thetaHop: cfg.section7HopThreshold,
+        },
+      );
+
+      profiler?.mark("fit");
+      const mergedCandidates = mergeSection7VariantCandidates(ranked, hopExpanded);
+      const elevatedGuidanceBudget = Math.max(
+        0,
+        Math.min(
+          memoryBudget * (cfg.elevatedGuidanceBudgetFraction ?? 0.15),
+          retrievalBudget,
+        ),
+      );
+      const elevatedItems = fitPromptBudget(
+        mergedCandidates.filter((item) => item.metadata.elevated_guidance === true),
+        elevatedGuidanceBudget,
+      );
+      const remainingAfterElevated = Math.max(0, retrievalBudget - tokenCostSum(elevatedItems));
+      const variantItems = fitPromptBudget(
+        mergedCandidates.filter((item) => item.metadata.elevated_guidance !== true),
+        remainingAfterElevated,
+      );
+      const selected = [
+        ...hardItems,
+        ...tailBaseItems,
+        ...softItems,
+        ...tailExtensionItems,
+        ...elevatedItems,
+        ...variantItems,
+      ];
+      void rpc.call("bump_access_counts", {
+        updates: groupAccessCountUpdates([...elevatedItems, ...variantItems]),
+      }).catch(() => {});
+
+      profiler?.mark("render");
+      const selectedMessages = selected.map((item) => ({
+        role: "system",
+        content: buildInjectedMemoryMessageContent(item),
+      }));
+
+      return {
+        messages: [...selectedMessages, ...messages],
+        estimatedTokens: countTokens(selectedMessages) + countTokens(messages),
+        systemPromptAddition: buildMemoryHeader(selected),
+      };
     },
     async compact({ sessionId, force, targetSize }: ContextCompactArgs) {
       const rpc = await getRpc();

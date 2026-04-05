@@ -21,7 +21,7 @@ export default definePluginEntry({
     api.registerContextEngine("libravdb-memory", () =>
       buildContextEngineFactory(runtime.getRpc, cfg, recallCache),
     );
-    api.registerMemoryPromptSection(buildMemoryPromptSection());
+    api.registerMemoryPromptSection(buildMemoryPromptSection(runtime.getRpc, cfg, recallCache));
     api.on("gateway_stop", () => runtime.shutdown());
   },
 });

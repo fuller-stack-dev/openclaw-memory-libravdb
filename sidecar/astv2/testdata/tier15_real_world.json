@@ -1,0 +1,346 @@
+[
+  {
+    "Name": "real_world_priority_guidance_simd",
+    "Source": "deontic:user:soul-1",
+    "Text": "Prioritize SIMD-optimization, data-locality, and zero-copy patterns.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What optimizations should I prioritize?",
+      "How should I structure the hot path?",
+      "What about SIMD for the data structures?"
+    ],
+    "Reason": "Overlaps with deontic BehavioralRule:true but phrased as a priority rather than a hard rule; Tier 1.5 because it is project-specific guidance with verbatim-sensitive technical terms."
+  },
+  {
+    "Name": "real_world_preference_static_dispatch",
+    "Source": "deontic:user:soul-1",
+    "Text": "Prefer static dispatch over runtime polymorphism.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "Should I use static or dynamic dispatch?",
+      "What approach for polymorphism?"
+    ],
+    "Reason": "Engineering preference expressed as guidance; overlaps deontic but 'prefer' framing keeps it at Tier 1.5 rather than Tier 0. The technical substance must survive compaction."
+  },
+  {
+    "Name": "real_world_cache_line_guidance",
+    "Source": "deontic:user:soul-1",
+    "Text": "Code must reflect an understanding of L1/L2 cache lines.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What should I know about cache lines?",
+      "How should I structure memory access?"
+    ],
+    "Reason": "Deontic corpus marks this as BehavioralRule:true but the Tier 1.5 label captures that it is operational guidance with specific technical terms (L1/L2) that must be preserved verbatim."
+  },
+  {
+    "Name": "real_world_conditional_syscall",
+    "Source": "deontic:user:soul-1",
+    "Text": "If a task can be solved with a syscall or a bit-shift, do not use a library.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "Should I use a library or syscalls?",
+      "How do I handle this task?"
+    ],
+    "Reason": "Conditional prohibition from a soul file; Tier 1.5 because the conditional structure and the syscall/bit-shift specificity are both verbatim-sensitive guidance signals."
+  },
+  {
+    "Name": "real_world_csp_preference",
+    "Source": "deontic:user:claude-1",
+    "Text": "Prefer CSP (Communicating Sequential Processes) via channels; avoid raw Mutexes where possible.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What concurrency model should I use?",
+      "How should I handle concurrency in the hot path?",
+      "Channels or mutexes?"
+    ],
+    "Reason": "Overlaps with deontic behavioral guidance but Tier 1.5 because 'prefer' and 'where possible' soften it below Tier 0; the CSP vs mutex distinction is verbatim-sensitive."
+  },
+  {
+    "Name": "real_world_memory_arena_rule",
+    "Source": "deontic:user:claude-1",
+    "Text": "Use Arena allocators (`mem.Arena`) for request-scoped lifetimes.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What allocator for request-scoped memory?",
+      "How should I manage memory lifetimes?"
+    ],
+    "Reason": "Specific memory management guidance with exact type reference (`mem.Arena`); Tier 1.5 because the verbatim type name is critical for correct implementation."
+  },
+  {
+    "Name": "real_world_benchmark_gate",
+    "Source": "deontic:user:agents-1",
+    "Text": "Every PR generated must include a benchmark diff showing 0% regression in nanoseconds/op.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What benchmark requirement for PRs?",
+      "What is the performance gate for this project?"
+    ],
+    "Reason": "Deontic marks as BehavioralRule:true but Tier 1.5 because the exact benchmark metric (nanoseconds/op) is verbatim-sensitive and the 0% regression threshold is a precise contract."
+  },
+  {
+    "Name": "real_world_reject_abstraction_leaks",
+    "Source": "deontic:user:soul-high-structure",
+    "Text": "Reject abstraction leaks.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "How should I handle abstraction in this project?",
+      "What about abstraction leaks?"
+    ],
+    "Reason": "Short directive that deontic marks as BehavioralRule:true; Tier 1.5 captures that the brevity makes verbatim preservation critical - 'abstraction leaks' is the precise technical term."
+  },
+  {
+    "Name": "real_world_simd_alignment_validation",
+    "Source": "deontic:user:soul-high-structure",
+    "Text": "Validate SIMD alignment for all buffer operations.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What validation for buffer operations?",
+      "How do I handle SIMD alignment?"
+    ],
+    "Reason": "Direct validation instruction with verbatim-sensitive SIMD term; Tier 1.5 because the correctness requirement around alignment is operational but not a universal rule."
+  },
+  {
+    "Name": "real_world_uintptr_priority",
+    "Source": "deontic:user:soul-high-structure",
+    "Text": "Prioritize `uintptr` over interface types.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What type should I use for pointers?",
+      "uintptr or interface types?"
+    ],
+    "Reason": "Type-level engineering guidance; Tier 1.5 because 'uintptr' is verbatim-sensitive and the preference framing keeps it below Tier 0 despite being highly specific."
+  },
+  {
+    "Name": "real_world_no_unnecessary_copies",
+    "Source": "deontic:user:soul-mixed-structure",
+    "Text": "No unnecessary copies.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "How should I handle data passing?",
+      "What about copies in this code?"
+    ],
+    "Reason": "Concise prohibition; deontic marks as BehavioralRule:true but Tier 1.5 captures that the terse phrasing makes semantic rescue important if deontic signal is missed during extraction."
+  },
+  {
+    "Name": "real_world_deterministic_gating",
+    "Source": "deontic:user:claude-rigid",
+    "Text": "Deterministic Gating: Logic in `slabby/` must use the gating scalar defined in `docs/math.md`.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "How does gating work in slabby?",
+      "What scalar should I use for the memory gate?"
+    ],
+    "Reason": "Precise subsystem guidance with exact file reference; Tier 1.5 because the file path and scalar contract are verbatim-sensitive operational constraints."
+  },
+  {
+    "Name": "real_world_no_external_deps",
+    "Source": "deontic:user:claude-rigid",
+    "Text": "No External Deps: Avoid `std` in Odin core; use `core:sys/linux` for syscalls.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What dependencies should I avoid?",
+      "What syscall approach for Odin?"
+    ],
+    "Reason": "Specific tooling guidance with verbatim-sensitive module paths (`core:sys/linux`); Tier 1.5 because these exact module names are the operational contract."
+  },
+  {
+    "Name": "real_world_atomic_counters_hot_path",
+    "Source": "deontic:user:claude-mixed",
+    "Text": "Use `sync/atomic` for counters. We don't like the overhead of Mutexes in the hot path.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "How should I handle counters?",
+      "What about mutexes in the hot path?"
+    ],
+    "Reason": "Operational concurrency guidance with verbatim-sensitive package name (`sync/atomic`); Tier 1.5 because the 'hot path' qualifier and the specific package are both preservation-sensitive."
+  },
+  {
+    "Name": "real_world_frontend_wcag",
+    "Source": "deontic:user:real-soul-frontend-developer",
+    "Text": "Follow WCAG 2.1 AA guidelines for accessibility compliance.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What accessibility standard for this project?",
+      "How should I handle accessibility?"
+    ],
+    "Reason": "Compliance guidance with exact standard reference; Tier 1.5 because the specific WCAG version and level are verbatim-sensitive for auditability."
+  },
+  {
+    "Name": "real_world_email_preserve_identity",
+    "Source": "deontic:user:real-soul-email-intelligence-engineer",
+    "Text": "Always preserve participant identity through the processing pipeline.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "medium",
+    "QueryPrompts": [
+      "Should I preserve email identities?",
+      "How do I handle participant data?"
+    ],
+    "Reason": "Guidance with 'always' but framed as project-specific pipeline rule; Tier 1.5 because the 'processing pipeline' context is preservation-sensitive."
+  },
+  {
+    "Name": "real_world_auditor_never_skip_manual",
+    "Source": "deontic:user:real-soul-blockchain-security-auditor",
+    "Text": "Never skip the manual review.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What review steps for the audit?",
+      "Can I skip manual review?"
+    ],
+    "Reason": "Strong prohibition; deontic marks BehavioralRule:true but Tier 1.5 captures that 'manual review' is the verbatim-sensitive step that distinguishes this audit process."
+  },
+  {
+    "Name": "real_world_trust_architect_fail_closed",
+    "Source": "deontic:user:real-soul-trust-architect",
+    "Text": "If identity cannot be verified, deny the action.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What if identity verification fails?",
+      "How should I handle unverified identity?"
+    ],
+    "Reason": "Conditional fail-closed policy; Tier 1.5 because the fail-closed behavior is verbatim-sensitive security contract that must survive compaction."
+  },
+  {
+    "Name": "real_world_alignment_is_holy",
+    "Source": "deontic:user:claude-unusual",
+    "Text": "Alignment is Holy: Every struct must be cache-aligned. If a struct crosses a 64-byte boundary, refactor it.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.9,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What about struct alignment?",
+      "How should structs be laid out?"
+    ],
+    "Reason": "Tier 1.5 because the exact 64-byte boundary threshold and the 'refactor' remediation are verbatim-sensitive operational constraints."
+  },
+  {
+    "Name": "real_world_no_metal_market_junk",
+    "Source": "deontic:user:claude-unusual",
+    "Text": "No Mass-Market Junk: We do not use third-party HTTP routers. We use the Nanite Radix tree.",
+    "expectedTier": "tier1_5",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.8,
+    "ShouldSurviveCompaction": true,
+    "VerbatimPreservationSensitivity": "high",
+    "QueryPrompts": [
+      "What HTTP router should I use?",
+      "Should I use a third-party router?"
+    ],
+    "Reason": "Specific tool choice prohibition with verbatim-sensitive replacement ('Nanite Radix tree'); Tier 1.5 captures that the project-specific router name is the key signal."
+  },
+  {
+    "Name": "real_world_lore_identity_metadata_tier2",
+    "Source": "deontic:user:soul-high-structure",
+    "Text": "PRIMARY_LANGUAGES: [Odin, C++, Go]",
+    "expectedTier": "tier2_only",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.5,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "low",
+    "QueryPrompts": [
+      "What languages for this project?"
+    ],
+    "Reason": "Deontic corpus marks as BehavioralRule:false; Tier 1.5 confirms this is identity metadata not guidance, so it goes to tier2_only and should NOT survive compaction as elevated guidance."
+  },
+  {
+    "Name": "real_world_lore_success_metric_tier2",
+    "Source": "deontic:user:real-soul-account-strategist",
+    "Text": "Net Revenue Retention exceeds 120% across your portfolio.",
+    "expectedTier": "tier2_only",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.5,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "none",
+    "QueryPrompts": [
+      "What is the NRR target?"
+    ],
+    "Reason": "Deontic marks BehavioralRule:false; Tier 1.5 confirms this is a success metric description, not operational guidance, so it belongs in tier2_only for semantic recall but not elevated."
+  },
+  {
+    "Name": "real_world_lore_memory_description_tier2",
+    "Source": "deontic:user:real-soul-psychologist",
+    "Text": "Memory: You build psychological profiles across the conversation, tracking behavioral patterns, defense mechanisms, and relational dynamics.",
+    "expectedTier": "tier2_only",
+    "ProvenanceClass": "authored_soft",
+    "StabilityWeight": 0.5,
+    "ShouldSurviveCompaction": false,
+    "VerbatimPreservationSensitivity": "none",
+    "QueryPrompts": [
+      "What is the memory approach?"
+    ],
+    "Reason": "Deontic marks as BehavioralRule:false; Tier 1.5 confirms this is a capability description rather than guidance, so tier2_only for historical recall but not elevated."
+  }
+]

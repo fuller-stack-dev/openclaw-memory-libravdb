@@ -509,6 +509,17 @@ export function buildContextEngineFactory(
 
       profiler?.mark("fit");
       const mergedCandidates = mergeSection7VariantCandidates(ranked, hopExpanded);
+      // Recovery trigger is evaluated before variant fitting so healthy sessions
+      // do not lose recall budget to an unused recovery reserve.
+      profiler?.mark("recovery_trigger");
+      const recoveryTrigger = detectRetrievalFailure(mergedCandidates, {
+        floorScore: cfg.recoveryFloorScore ?? 0.15,
+        minTopK: cfg.recoveryMinTopK ?? 4,
+        meanConfidenceThresh: cfg.recoveryMinConfidenceMean ?? 0.5,
+      });
+      const recoveryReserveTokens = recoveryTrigger.fire
+        ? Math.min(memoryBudget, Math.max(Math.floor(memoryBudget * 0.10), 16), 128)
+        : 0;
       const elevatedGuidanceBudget = Math.max(
         0,
         Math.min(
@@ -521,13 +532,6 @@ export function buildContextEngineFactory(
         elevatedGuidanceBudget,
       );
       const remainingAfterElevated = Math.max(0, retrievalBudget - tokenCostSum(elevatedItems));
-
-      // Reserve a bounded explicit recovery budget before variant fitting.
-      // Recovery is a policy overlay: it appends raw content only when triggered,
-      // and must not cause the final assembly to exceed memoryBudget.
-      // This reserve (min 10% of memoryBudget or 128 tokens) is deducted from the
-      // variant slot so the final total is bounded by construction.
-      const recoveryReserveTokens = Math.min(Math.floor(memoryBudget * 0.10), 128);
       const remainingForVariant = Math.max(0, remainingAfterElevated - recoveryReserveTokens);
       const variantItems = fitPromptBudget(
         mergedCandidates.filter((item) => item.metadata.elevated_guidance !== true),
@@ -546,15 +550,8 @@ export function buildContextEngineFactory(
         ...variantItems.map((i) => i.id),
       ]);
 
-      // Recovery trigger: evaluated after theorem result is fully assembled.
       // Recovery is a policy overlay — it appends raw content only when triggered,
       // it never modifies the C_total(q) output and does not spend from tau_V.
-      profiler?.mark("recovery_trigger");
-      const recoveryTrigger = detectRetrievalFailure(mergedCandidates, {
-        floorScore: cfg.recoveryFloorScore ?? 0.15,
-        minTopK: cfg.recoveryMinTopK ?? 4,
-        meanConfidenceThresh: cfg.recoveryMinConfidenceMean ?? 0.5,
-      });
       let recoveryItems: SearchResult[] = [];
       if (recoveryTrigger.fire) {
         profiler?.mark("recovery_expand");

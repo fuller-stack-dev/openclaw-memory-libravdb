@@ -189,6 +189,6 @@ test("missing daemon errors point users at libravdbd instead of spawn internals"
 
   await assert.rejects(
     () => startSidecar({ rpcTimeoutMs: 50 }, createLogger(), runtime.runtime),
-    /Install and start libravdbd/,
+    /install and start libravdbd separately/i,
   );
 });

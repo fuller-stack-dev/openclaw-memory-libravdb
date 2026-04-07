@@ -230,17 +230,17 @@ RUNTIME_LIB[darwin-arm64]="onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}/lib/libo
 
 RUNTIME_ARCHIVE[darwin-amd64]="onnxruntime-osx-x86_64-${ONNXRUNTIME_VERSION}.tgz"
 RUNTIME_URL[darwin-amd64]="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-x86_64-${ONNXRUNTIME_VERSION}.tgz"
-RUNTIME_SHA256[darwin-amd64]=""
+RUNTIME_SHA256[darwin-amd64]=""  # TODO: pin after testing darwin-amd64 (compute via: shasum -a 256 <archive>)
 RUNTIME_LIB[darwin-amd64]="onnxruntime-osx-x86_64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.dylib"
 
 RUNTIME_ARCHIVE[linux-amd64]="onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"
 RUNTIME_URL[linux-amd64]="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"
-RUNTIME_SHA256[linux-amd64]=""
+RUNTIME_SHA256[linux-amd64]=""   # TODO: pin after testing linux-amd64
 RUNTIME_LIB[linux-amd64]="onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so"
 
 RUNTIME_ARCHIVE[linux-arm64]="onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}.tgz"
 RUNTIME_URL[linux-arm64]="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}.tgz"
-RUNTIME_SHA256[linux-arm64]=""
+RUNTIME_SHA256[linux-arm64]=""   # TODO: pin after testing linux-arm64
 RUNTIME_LIB[linux-arm64]="onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so"
 
 provision_runtime() {

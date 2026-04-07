@@ -10,6 +10,10 @@ const REQUIRED_TARGETS = {
   "__SHA256_LINUX_AMD64__": "libravdbd-linux-amd64.sha256",
 };
 
+const OPTIONAL_TARGETS = {
+  "__SHA256_PROVISION__": "provision.sh.sha256",
+};
+
 export function readChecksumFile(filePath) {
   const text = fs.readFileSync(filePath, "utf8").trim();
   const match = text.match(/[a-f0-9]{64}/i);
@@ -23,6 +27,12 @@ export function collectChecksums(distDir) {
   const checksums = {};
   for (const [placeholder, fileName] of Object.entries(REQUIRED_TARGETS)) {
     checksums[placeholder] = readChecksumFile(path.join(distDir, fileName));
+  }
+  for (const [placeholder, fileName] of Object.entries(OPTIONAL_TARGETS)) {
+    const filePath = path.join(distDir, fileName);
+    if (fs.existsSync(filePath)) {
+      checksums[placeholder] = readChecksumFile(filePath);
+    }
   }
   return checksums;
 }

@@ -108,6 +108,13 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Copy provision.sh into dist
+        run: cp scripts/provision.sh dist/provision.sh
+
+      - name: Generate provision.sh checksum
+        working-directory: dist
+        run: shasum -a 256 provision.sh > provision.sh.sha256
+
       - name: Generate Homebrew formula
         run: |
           node scripts/generate-homebrew-formula.js \
@@ -120,7 +127,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: homebrew-formula
-          path: dist/libravdbd.rb
+          path: |
+            dist/libravdbd.rb
+            dist/provision.sh
+            dist/provision.sh.sha256
           if-no-files-found: error
 
   publish-release:
@@ -154,6 +164,8 @@ jobs:
             dist/libravdbd-windows-amd64.exe
             dist/libravdbd-windows-amd64.exe.sha256
             dist/libravdbd.rb
+            dist/provision.sh
+            dist/provision.sh.sha256
 
   publish-homebrew-tap:
     name: publish-homebrew-tap

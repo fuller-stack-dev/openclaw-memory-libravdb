@@ -87,6 +87,11 @@ class Libravdbd < Formula
     sha256 "d112428e703aa7ea0d6b17a77e9739fcc15b87653779d9b7942d5ecbc61c00ed"
   end
 
+  resource "provision" do
+    url "https://github.com/xDarkicex/openclaw-memory-libravdb/releases/download/v#{version}/provision.sh"
+    sha256 "__SHA256_PROVISION__"
+  end
+
   def install
     bin.install Dir["libravdbd*"].first => "libravdbd"
 
@@ -137,6 +142,27 @@ class Libravdbd < Formula
       cp "config.json", t5_dir/"config.json"
     end
     write_summarizer_manifest(t5_dir, "t5-small")
+
+    libexec.install resource("provision")
+    chmod 0755, libexec/"provision.sh"
+  end
+
+  def post_install
+    (var/"clawdb/data").mkpath
+    (var/"clawdb/run").mkpath
+  end
+
+  def caveats
+    <<~EOS
+      libravdbd requires ONNX embedding models to function.  Models are
+      automatically provisioned during `brew install`.  To re-provision
+      or repair assets manually:
+
+        #{libexec}/provision.sh --target #{prefix}/models
+
+      Data directory:   #{var}/clawdb/data
+      Socket directory: #{var}/clawdb/run
+    EOS
   end
 
   private
@@ -175,9 +201,11 @@ class Libravdbd < Formula
 
   service do
     run [opt_bin/"libravdbd", "serve"]
-    environment_variables LIBRAVDB_RPC_ENDPOINT: "unix:#{ENV["HOME"]}/.clawdb/run/libravdb.sock"
+    environment_variables LIBRAVDB_RPC_ENDPOINT: "unix:#{var}/clawdb/run/libravdb.sock",
+                          LIBRAVDB_DB_PATH: "#{var}/clawdb/data",
+                          LIBRAVDB_SUMMARIZER_BACKEND: "bundled"
     keep_alive true
-    working_dir ENV["HOME"]
+    working_dir var/"clawdb"
   end
 
   test do

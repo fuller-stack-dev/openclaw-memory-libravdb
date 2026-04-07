@@ -13,6 +13,12 @@
     <dict>
       <key>LIBRAVDB_RPC_ENDPOINT</key>
       <string>unix:__HOME__/.clawdb/run/libravdb.sock</string>
+      <key>LIBRAVDB_DB_PATH</key>
+      <string>__HOME__/.clawdb/data</string>
+      <key>LIBRAVDB_ONNX_RUNTIME</key>
+      <string>__DAEMON_BIN_DIR__/onnxruntime</string>
+      <key>LIBRAVDB_SUMMARIZER_BACKEND</key>
+      <string>bundled</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

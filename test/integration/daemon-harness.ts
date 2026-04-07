@@ -76,28 +76,8 @@ async function waitForReachableEndpoint(endpoint: string, child?: { exitCode: nu
   throw new Error(`timed out waiting for local libravdbd to become reachable at ${endpoint}`);
 }
 
-export async function acquireTestDaemonHandle(): Promise<TestDaemonHandle> {
-  const configured = process.env.LIBRAVDB_TEST_SIDECAR_PATH?.trim();
-  if (configured) {
-    const reachable = await probeSidecarEndpoint({
-      rpcTimeoutMs: 500,
-      sidecarPath: configured,
-    });
-    if (!reachable) {
-      throw new Error(`configured daemon endpoint ${configured} is not reachable`);
-    }
-    return {
-      endpoint: reachable,
-      async stop() {},
-    };
-  }
-
-  await ensureDaemonBuilt();
-
-  const tempDir = await mkdtemp(path.join(tmpdir(), "libravdbd-test-"));
+async function launchDaemonAtEndpoint(endpoint: string, tempDir: string): Promise<TestDaemonHandle> {
   const dbPath = path.join(tempDir, "libravdb-data.libravdb");
-  const launchEndpoint =
-    process.platform === "win32" ? "tcp:127.0.0.1:0" : `unix:${path.join(tempDir, "libravdb.sock")}`;
   let child: ReturnType<typeof spawn> | null = null;
 
   try {
@@ -106,7 +86,7 @@ export async function acquireTestDaemonHandle(): Promise<TestDaemonHandle> {
       env: {
         ...process.env,
         LIBRAVDB_DB_PATH: dbPath,
-        LIBRAVDB_RPC_ENDPOINT: launchEndpoint,
+        LIBRAVDB_RPC_ENDPOINT: endpoint,
         GOCACHE: process.env.GOCACHE ?? "/tmp/openclaw-go-cache",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -120,23 +100,20 @@ export async function acquireTestDaemonHandle(): Promise<TestDaemonHandle> {
       });
     }
 
-    const endpoint =
-      process.platform === "win32"
-        ? await Promise.race([
-            waitForLineMatching(child.stdout!, /^(?:tcp:|unix:)/),
-            new Promise<string>((_, reject) => {
-              child?.once("exit", (code, signal) => {
-                reject(
-                  new Error(
-                    `local libravdbd exited before reporting an endpoint (code=${code}, signal=${signal})\n${stderr.trim()}`,
-                  ),
-                );
-              });
-              child?.once("error", (error) => reject(error));
-            }),
-          ])
-        : launchEndpoint;
-    const reachable = await waitForReachableEndpoint(endpoint, child);
+    const reportedEndpoint = await Promise.race([
+      waitForLineMatching(child.stdout!, /^(?:tcp:|unix:)/),
+      new Promise<string>((_, reject) => {
+        child?.once("exit", (code, signal) => {
+          reject(
+            new Error(
+              `local libravdbd exited before reporting an endpoint (code=${code}, signal=${signal})\n${stderr.trim()}`,
+            ),
+          );
+        });
+        child?.once("error", (error) => reject(error));
+      }),
+    ]);
+    const reachable = await waitForReachableEndpoint(reportedEndpoint, child);
 
     return {
       endpoint: reachable,
@@ -164,6 +141,47 @@ export async function acquireTestDaemonHandle(): Promise<TestDaemonHandle> {
     if (child && child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
     }
+    await rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export async function acquireTestDaemonHandle(): Promise<TestDaemonHandle> {
+  const configured = process.env.LIBRAVDB_TEST_SIDECAR_PATH?.trim();
+  if (configured) {
+    const reachable = await probeSidecarEndpoint({
+      rpcTimeoutMs: 500,
+      sidecarPath: configured,
+    });
+    if (!reachable) {
+      throw new Error(`configured daemon endpoint ${configured} is not reachable`);
+    }
+    return {
+      endpoint: reachable,
+      async stop() {},
+    };
+  }
+
+  await ensureDaemonBuilt();
+  if (process.platform !== "win32") {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "libravdbd-test-"));
+    const unixEndpoint = `unix:${path.join(tempDir, "libravdb.sock")}`;
+    try {
+      return await launchDaemonAtEndpoint(unixEndpoint, tempDir);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("exited before becoming reachable") && !message.includes("operation not permitted")) {
+        await rm(tempDir, { recursive: true, force: true });
+        throw error;
+      }
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "libravdbd-test-"));
+  try {
+    return await launchDaemonAtEndpoint("tcp:127.0.0.1:0", tempDir);
+  } catch (error) {
     await rm(tempDir, { recursive: true, force: true });
     throw error;
   }

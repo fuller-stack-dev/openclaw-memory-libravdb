@@ -26,6 +26,49 @@ function extractProfileMs(lines: string[], label: string): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function sumProfileMs(lines: string[]): number {
+  return lines.reduce((sum, line) => {
+    const match = /^assemble profile: [^=]+=([0-9.]+)ms$/.exec(line);
+    if (!match) {
+      return sum;
+    }
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+}
+
+function buildSummaryShapedSessionSurface(sessionId: string): SearchResult[] {
+  const summaries = [
+    { id: "summary-1", score: 0.90, text: "low confidence summary item one", confidence: 0.30, decayRate: 0.70, ageMs: 60_000 },
+    { id: "summary-2", score: 0.88, text: "low confidence summary item two", confidence: 0.35, decayRate: 0.65, ageMs: 55_000 },
+    { id: "summary-3", score: 0.85, text: "low confidence summary item three", confidence: 0.28, decayRate: 0.72, ageMs: 50_000 },
+    { id: "summary-4", score: 0.82, text: "low confidence summary item four", confidence: 0.40, decayRate: 0.60, ageMs: 45_000 },
+    { id: "summary-5", score: 0.80, text: "low confidence summary item five", confidence: 0.32, decayRate: 0.68, ageMs: 40_000 },
+    { id: "summary-6", score: 0.78, text: "low confidence summary item six", confidence: 0.27, decayRate: 0.73, ageMs: 35_000 },
+  ];
+
+  return summaries.map((summary) => ({
+    id: summary.id,
+    score: summary.score,
+    text: summary.text,
+    metadata: {
+      sessionId,
+      ts: Date.now() - summary.ageMs,
+      collection: `session:${sessionId}`,
+      type: "summary",
+      confidence: summary.confidence,
+      decay_rate: summary.decayRate,
+      authority: 1,
+      token_estimate: 5,
+    },
+  }));
+}
+
+const MID_SIZED_BENCHMARK_TURNS = 64;
+const MID_SIZED_SUMMARY_BATCHES = 4;
+const MID_SIZED_SUMMARY_BATCH_SIZE = 16;
+const ASSEMBLE_EVIDENCE_GATE_MS = Number(process.env.OPENCLAW_ASSEMBLE_EVIDENCE_GATE_MS ?? "100");
+
 function authoredCollectionResults(collection: string): SearchResult[] {
   return collection === "authored:hard"
     ? [{ id: "AGENTS.md#000001", score: 0, text: "Always cite the governing math.", metadata: { authored: true, tier: 1, ordinal: 1, source_doc: "AGENTS.md", token_estimate: 6 } }]
@@ -572,7 +615,7 @@ test("context-engine bootstrap -> ingest -> assemble -> compact host flow", asyn
   assert.equal(userInsert?.metadata?.gating_gtech, 0.85);
 });
 
-test("real sidecar assemble profile probe", async (t) => {
+test("real sidecar mid-sized session search benchmark", async (t) => {
   if (process.env.OPENCLAW_PROFILE_ASSEMBLE !== "1") {
     t.skip("requires OPENCLAW_PROFILE_ASSEMBLE=1");
     return;
@@ -607,15 +650,18 @@ test("real sidecar assemble profile probe", async (t) => {
       const userId = `profile-user-${label}-${process.pid}-${seed}`;
       const queryText = "real sidecar profiling probe";
       const isSummaryOnly = cfg.useSessionSummarySearchExperiment === true;
+      const benchmarkTurnCount = isSummaryOnly
+        ? MID_SIZED_SUMMARY_BATCHES * MID_SIZED_SUMMARY_BATCH_SIZE
+        : MID_SIZED_BENCHMARK_TURNS;
 
       try {
         await context.bootstrap({ sessionId, userId });
         if (isSummaryOnly) {
-          // Build a richer compacted session so summary-only probing does not
-          // overfit a trivial one-summary collection.
+          // Build a mid-sized compacted session so summary-only benchmarking
+          // does not overfit a trivial one-summary collection.
           let turnIndex = 0;
-          for (let batch = 0; batch < 3; batch += 1) {
-            for (let i = 0; i < 6; i += 1) {
+          for (let batch = 0; batch < MID_SIZED_SUMMARY_BATCHES; batch += 1) {
+            for (let i = 0; i < MID_SIZED_SUMMARY_BATCH_SIZE; i += 1) {
               await context.ingest({
                 sessionId,
                 userId,
@@ -628,7 +674,7 @@ test("real sidecar assemble profile probe", async (t) => {
             assert.equal(compacted.compacted, true);
           }
         } else {
-          for (let i = 0; i < (cfg.useSessionRecallProjection ? 8 : 8); i += 1) {
+          for (let i = 0; i < benchmarkTurnCount; i += 1) {
             await context.ingest({
               sessionId,
               userId,
@@ -658,8 +704,24 @@ test("real sidecar assemble profile probe", async (t) => {
         const collectionState = await rpc.call<{ results: SearchResult[] }>("list_collection", {
           collection: searchCollection,
         });
+        if (isSummaryOnly) {
+          assert.ok(
+            collectionState.results.length >= 2,
+            `expected mid-sized summary-only benchmark fixture, got ${collectionState.results.length} records`,
+          );
+        } else if (cfg.useSessionRecallProjection) {
+          assert.ok(
+            collectionState.results.length >= 32,
+            `expected mid-sized session_recall projection fixture, got ${collectionState.results.length} records`,
+          );
+        } else {
+          assert.ok(
+            collectionState.results.length >= 32,
+            `expected mid-sized baseline fixture, got ${collectionState.results.length} records`,
+          );
+        }
         process.stdout.write(
-          `[probe:${label}] search_collection=${searchCollection} record_count=${collectionState.results.length} summary_record_count=${summaryState.results.length}\n`,
+          `[benchmark:${label}] search_collection=${searchCollection} record_count=${collectionState.results.length} summary_record_count=${summaryState.results.length}\n`,
         );
 
         for (let i = 0; i < 3; i += 1) {
@@ -677,11 +739,24 @@ test("real sidecar assemble profile probe", async (t) => {
             tokenBudget: 4000,
           });
           const passLogs = assembled._profile ?? [];
+          const passTotalMs = sumProfileMs(passLogs);
+          const sessionSearchMs = extractProfileMs(passLogs, "session_search");
           if (passLogs.length === 0) {
-            process.stdout.write(`[probe:${label}:pass${i + 1}] no profiler lines captured\n`);
+            process.stdout.write(`[benchmark:${label}:pass${i + 1}] no profiler lines captured\n`);
           }
           for (const line of passLogs) {
-            process.stdout.write(`[probe:${label}:pass${i + 1}] ${line}\n`);
+            process.stdout.write(`[benchmark:${label}:pass${i + 1}] ${line}\n`);
+          }
+          if (process.env.OPENCLAW_ENFORCE_ASSEMBLE_EVIDENCE_GATE === "1" && i > 0) {
+            assert.ok(
+              sessionSearchMs !== null && sessionSearchMs <= ASSEMBLE_EVIDENCE_GATE_MS,
+              `warm assemble pass ${i + 1} exceeded evidence gate: session_search=${sessionSearchMs?.toFixed(2) ?? "n/a"}ms > ${ASSEMBLE_EVIDENCE_GATE_MS}ms`,
+            );
+          }
+          if (process.env.OPENCLAW_ENFORCE_ASSEMBLE_EVIDENCE_GATE === "1") {
+            process.stdout.write(
+              `[benchmark:${label}:pass${i + 1}] gate=session_search<=${ASSEMBLE_EVIDENCE_GATE_MS} total=${passTotalMs.toFixed(2)}ms\n`,
+            );
           }
           assert.ok(assembled.messages.length > 0);
           assert.ok(assembled.systemPromptAddition.length > 0);
@@ -692,8 +767,10 @@ test("real sidecar assemble profile probe", async (t) => {
     }
 
     await runScenario("baseline", {});
-    await runScenario("session_recall", { useSessionRecallProjection: true });
-    await runScenario("session_summary_only", { useSessionSummarySearchExperiment: true });
+    if (process.env.OPENCLAW_BENCHMARK_COMPARE_VARIANTS === "1") {
+      await runScenario("session_recall", { useSessionRecallProjection: true });
+      await runScenario("session_summary_only", { useSessionSummarySearchExperiment: true });
+    }
   } finally {
     await daemon.stop();
   }
@@ -2445,98 +2522,7 @@ test("assemble: session returning only low-confidence summaries fires signal-3 a
   // fire, triggering query_raw_session.
   // Recovery content must appear AFTER the normal assembly result.
   const rpc = new ProjectionStoreRpc();
-  rpc.collections.set("session:s1", [
-    {
-      id: "summary-1",
-      score: 0.90,
-      text: "low confidence summary item one",
-      metadata: {
-        sessionId: "s1",
-        ts: Date.now() - 60_000,
-        collection: "session:s1",
-        type: "summary",
-        confidence: 0.30,
-        decay_rate: 0.7,
-        authority: 1,
-        token_estimate: 5,
-      },
-    },
-    {
-      id: "summary-2",
-      score: 0.88,
-      text: "low confidence summary item two",
-      metadata: {
-        sessionId: "s1",
-        ts: Date.now() - 55_000,
-        collection: "session:s1",
-        type: "summary",
-        confidence: 0.35,
-        decay_rate: 0.65,
-        authority: 1,
-        token_estimate: 5,
-      },
-    },
-    {
-      id: "summary-3",
-      score: 0.85,
-      text: "low confidence summary item three",
-      metadata: {
-        sessionId: "s1",
-        ts: Date.now() - 50_000,
-        collection: "session:s1",
-        type: "summary",
-        confidence: 0.28,
-        decay_rate: 0.72,
-        authority: 1,
-        token_estimate: 5,
-      },
-    },
-    {
-      id: "summary-4",
-      score: 0.82,
-      text: "low confidence summary item four",
-      metadata: {
-        sessionId: "s1",
-        ts: Date.now() - 45_000,
-        collection: "session:s1",
-        type: "summary",
-        confidence: 0.40,
-        decay_rate: 0.60,
-        authority: 1,
-        token_estimate: 5,
-      },
-    },
-    {
-      id: "summary-5",
-      score: 0.80,
-      text: "low confidence summary item five",
-      metadata: {
-        sessionId: "s1",
-        ts: Date.now() - 40_000,
-        collection: "session:s1",
-        type: "summary",
-        confidence: 0.32,
-        decay_rate: 0.68,
-        authority: 1,
-        token_estimate: 5,
-      },
-    },
-    {
-      id: "summary-6",
-      score: 0.78,
-      text: "low confidence summary item six",
-      metadata: {
-        sessionId: "s1",
-        ts: Date.now() - 35_000,
-        collection: "session:s1",
-        type: "summary",
-        confidence: 0.27,
-        decay_rate: 0.73,
-        authority: 1,
-        token_estimate: 5,
-      },
-    },
-  ]);
+  rpc.collections.set("session:s1", buildSummaryShapedSessionSurface("s1"));
   // Seed session_raw with recovery candidates
   rpc.collections.set("session_raw:s1", [
     {

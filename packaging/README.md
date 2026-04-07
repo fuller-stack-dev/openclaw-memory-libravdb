@@ -11,10 +11,41 @@ The templates assume the default daemon endpoint contract used by the plugin:
 - macOS/Linux: `unix:$HOME/.clawdb/run/libravdb.sock`
 - Windows: `tcp:127.0.0.1:37421`
 
+## LaunchAgent plist
+
 Before loading the macOS plist, replace:
 
 - `__LIBRAVDBD_PATH__` with the absolute path to the `libravdbd` binary
 - `__HOME__` with the current user's home directory
+- `__ONNX_RUNTIME_LIB__` with the absolute path to the ONNX runtime shared library (e.g. `/path/to/onnxruntime/onnxruntime-osx-arm64-1.23.0/lib/libonnxruntime.dylib`)
+
+## Provisioning models and runtime
+
+**Primary install path:** The Homebrew formula (`brew install libravdbd`)
+provisions all required assets — ONNX Runtime, nomic-embed-text-v1.5,
+all-minilm-l6-v2, and t5-small — inline during `brew install`.  No
+additional steps are needed for a clean install.
+
+**Repair / recovery:** If assets are deleted or corrupted after install,
+`scripts/provision.sh` can rebuild them.  This is an operator tool, not
+the normal install path.
+
+```bash
+bash scripts/provision.sh                     # provisions into .daemon-bin/
+bash scripts/provision.sh --target /opt/libravdbd/assets  # custom target
+bash scripts/provision.sh --skip-summarizer   # skip optional t5-small model
+```
+
+The script downloads models from HuggingFace and the ONNX runtime from
+GitHub Releases, verifies SHA-256 checksums, and writes the `embedding.json`
+manifests that `libravdbd` needs at startup.  It is idempotent — existing
+verified assets are left in place.
+
+The npm package does not include `provision.sh` or any install-time
+provisioning hooks.  The `scripts/` directory is excluded from the
+published npm tarball via the `files` whitelist in `package.json`.
+
+## Homebrew formula
 
 The release workflow now generates `dist/libravdbd.rb` from this template using
 the release version and SHA-256 files. If `HOMEBREW_TAP_REPO` and
@@ -37,3 +68,4 @@ Template placeholders:
 - `__SHA256_DARWIN_AMD64__`
 - `__SHA256_LINUX_ARM64__`
 - `__SHA256_LINUX_AMD64__`
+- `__SHA256_PROVISION__`

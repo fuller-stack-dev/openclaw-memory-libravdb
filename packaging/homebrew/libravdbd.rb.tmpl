@@ -32,12 +32,12 @@ class Libravdbd < Formula
     if Hardware::CPU.arm?
       resource "onnxruntime" do
         url "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-linux-aarch64-1.23.0.tgz"
-        sha256 "TODO_COMPUTE_LINUX_ARM64_SHA256" # TODO: compute real checksum when Linux CI is available
+        sha256 :no_check # TODO: pin real checksum when Linux ARM64 CI is available
       end
     else
       resource "onnxruntime" do
         url "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-linux-x64-1.23.0.tgz"
-        sha256 "TODO_COMPUTE_LINUX_AMD64_SHA256" # TODO: compute real checksum when Linux CI is available
+        sha256 :no_check # TODO: pin real checksum when Linux AMD64 CI is available
       end
     end
   end
@@ -168,7 +168,8 @@ class Libravdbd < Formula
 
         #{libexec}/provision.sh --target #{prefix}/models
 
-      Data directory:   #{var}/clawdb/data
+      Data directory:   #{var}/clawdb
+      Database file:    #{var}/clawdb/data.libravdb
       Socket directory: #{var}/clawdb/run
     EOS
   end

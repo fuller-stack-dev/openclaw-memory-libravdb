@@ -21,8 +21,14 @@ Before loading the macOS plist, replace:
 
 ## Provisioning models and runtime
 
-After `postinstall` hooks were removed from the npm package, models and
-the ONNX runtime must be provisioned separately.  Use `scripts/provision.sh`:
+**Primary install path:** The Homebrew formula (`brew install libravdbd`)
+provisions all required assets — ONNX Runtime, nomic-embed-text-v1.5,
+all-minilm-l6-v2, and t5-small — inline during `brew install`.  No
+additional steps are needed for a clean install.
+
+**Repair / recovery:** If assets are deleted or corrupted after install,
+`scripts/provision.sh` can rebuild them.  This is an operator tool, not
+the normal install path.
 
 ```bash
 bash scripts/provision.sh                     # provisions into .daemon-bin/
@@ -35,8 +41,9 @@ GitHub Releases, verifies SHA-256 checksums, and writes the `embedding.json`
 manifests that `libravdbd` needs at startup.  It is idempotent — existing
 verified assets are left in place.
 
-The Homebrew formula stages all assets inline during `brew install`.
-`provision.sh` is bundled as a repair tool for manual re-provisioning.
+The npm package does not include `provision.sh` or any install-time
+provisioning hooks.  The `scripts/` directory is excluded from the
+published npm tarball via the `files` whitelist in `package.json`.
 
 ## Homebrew formula
 

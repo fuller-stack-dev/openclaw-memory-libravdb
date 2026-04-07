@@ -263,6 +263,10 @@ export function resolveConfiguredEndpoint(cfg: PluginConfig): string {
   return value;
 }
 
+export function daemonProvisioningHint(): string {
+  return "If you installed the npm package, install and start libravdbd separately; the package does not provision the daemon binary, ONNX Runtime, or model assets.";
+}
+
 export function defaultEndpoint(platform = process.platform, homeDir = os.homedir()): string {
   if (platform === "win32") {
     return "tcp:127.0.0.1:37421";
@@ -395,7 +399,7 @@ function formatConnectionError(endpoint: string, error: Error): Error {
     : "";
   if (code === "ENOENT" || code === "ECONNREFUSED") {
     return new Error(
-      `LibraVDB daemon unavailable at ${describeEndpoint(endpoint)}. Install and start libravdbd, or set sidecarPath to a running daemon endpoint.`,
+      `LibraVDB daemon unavailable at ${describeEndpoint(endpoint)}. ${daemonProvisioningHint()} Or set sidecarPath to a running daemon endpoint.`,
     );
   }
   return error;

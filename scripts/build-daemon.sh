@@ -23,6 +23,9 @@ fi
 if [[ -d "$MODELS_DIR/nomic-embed-text-v1.5" ]]; then
   cp -R "$MODELS_DIR/nomic-embed-text-v1.5" "$OUT_MODELS_DIR/nomic-embed-text-v1.5"
 fi
+if [[ -d "$MODELS_DIR/t5-small" ]]; then
+  cp -R "$MODELS_DIR/t5-small" "$OUT_MODELS_DIR/t5-small"
+fi
 if [[ -d "$MODELS_DIR/onnxruntime" ]]; then
   mkdir -p "$OUT_RUNTIME_DIR"
   cp -R "$MODELS_DIR/onnxruntime/." "$OUT_RUNTIME_DIR/"

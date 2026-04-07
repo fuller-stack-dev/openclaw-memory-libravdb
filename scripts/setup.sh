@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MODELS_DIR="$ROOT_DIR/.models"
-ORT_ARCHIVE="$MODELS_DIR/onnxruntime/onnxruntime-osx-arm64-1.23.0.tgz"
-ORT_LIB="$MODELS_DIR/onnxruntime/onnxruntime-osx-arm64-1.23.0/lib/libonnxruntime.dylib"
+ORT_ARCHIVE="$MODELS_DIR/onnxruntime/onnxruntime-osx-universal2-1.23.0.tgz"
+ORT_LIB="$MODELS_DIR/onnxruntime/onnxruntime-osx-universal2-1.23.0/lib/libonnxruntime.dylib"
 
 if [[ ! -f "$ORT_ARCHIVE" ]]; then
   echo "ONNX Runtime archive not found: $ORT_ARCHIVE" >&2

@@ -1,5 +1,5 @@
 import { RpcClient } from "./rpc.js";
-import { startSidecar } from "./sidecar.js";
+import { daemonProvisioningHint, startSidecar } from "./sidecar.js";
 import type { LoggerLike, PluginConfig, SidecarHandle } from "./types.js";
 
 export type RpcGetter = () => Promise<RpcClient>;
@@ -43,19 +43,19 @@ export function createPluginRuntime(
         const rpc = new RpcClient(sidecar.socket, {
           timeoutMs: cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS,
         });
-        const health = await rpc.call<{ ok?: boolean }>("health", {});
+        const health = await rpc.call<{ ok?: boolean; message?: string }>("health", {});
         if (!health.ok) {
           try {
             await sidecar.shutdown();
           } catch {
             // Ignore cleanup failure on startup rejection.
           }
-          throw new Error("LibraVDB daemon failed health check");
+          throw enrichStartupError("LibraVDB daemon failed health check", health.message);
         }
         return { rpc, sidecar };
       })().catch((error) => {
         started = null;
-        throw error;
+        throw enrichStartupError(error);
       });
     }
     return await started;
@@ -95,4 +95,22 @@ function formatError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+export function enrichStartupError(error: unknown, healthMessage?: string): Error {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const message = rawMessage.trim() || "LibraVDB daemon startup failed";
+  if (message.includes("install and start libravdbd separately") || message.includes("package does not provision the daemon binary")) {
+    return error instanceof Error ? error : new Error(message);
+  }
+  const shouldHint = /health check|daemon unavailable|connection refused|ECONNREFUSED|ENOENT|fallback mode|ONNX Runtime|embedder/i.test(
+    `${message} ${healthMessage ?? ""}`,
+  );
+  if (!shouldHint) {
+    return error instanceof Error ? error : new Error(message);
+  }
+
+  const detail = healthMessage?.trim();
+  const prefix = detail && !message.includes(detail) ? `${message}: ${detail}` : message;
+  return new Error(`${prefix}. ${daemonProvisioningHint()}`);
 }

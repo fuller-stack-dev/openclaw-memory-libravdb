@@ -36,6 +36,7 @@ bash scripts/build-daemon.sh
 ```
 
 This creates `.daemon-bin/libravdbd` and copies locally available bundled assets into `.daemon-bin/`.
+That includes the embedding models, ONNX Runtime, and the bundled T5 summarizer assets when they are present under `.models/`.
 
 ## Gating Invariants
 

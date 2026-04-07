@@ -38,3 +38,13 @@ test("buildFormula fills version and checksum placeholders", async () => {
     `version "1.3.11"\nsha256 "${"e".repeat(64)}"\n`,
   );
 });
+
+test("homebrew formula template stages runtime and embedding assets", () => {
+  const template = fs.readFileSync(path.join(process.cwd(), "packaging/homebrew/libravdbd.rb.tmpl"), "utf8");
+  assert.match(template, /resource "onnxruntime"/);
+  assert.match(template, /prefix\/"models"/);
+  assert.match(template, /embedding\.json/);
+  assert.match(template, /nomic-embed-text-v1\.5/);
+  assert.match(template, /t5-small-encoder/);
+  assert.match(template, /summarizer\.json/);
+});

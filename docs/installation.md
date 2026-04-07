@@ -183,6 +183,8 @@ The release workflow generates a publish-ready `libravdbd.rb` formula asset from
 - `libravdbd-linux-amd64`
 - `libravdbd-linux-arm64`
 
+The generated Homebrew formula also stages the bundled ONNX Runtime archive, the shipped embedding profile assets, and the T5 summarizer bundle into the install prefix so the daemon can start without a separate manual asset unpack step.
+
 If your GitHub Actions configuration includes:
 
 - repository variable `HOMEBREW_TAP_REPO`, for example `xDarkicex/homebrew-openclaw-libravdb-memory`

@@ -40,6 +40,11 @@ if (existsSync(bundledNomic)) {
   cpSync(bundledNomic, path.join(outModelsDir, "nomic-embed-text-v1.5"), { recursive: true });
 }
 
+const bundledT5 = path.join(modelsDir, "t5-small");
+if (existsSync(bundledT5)) {
+  cpSync(bundledT5, path.join(outModelsDir, "t5-small"), { recursive: true });
+}
+
 const runtimeBundle = path.join(modelsDir, "onnxruntime");
 if (existsSync(runtimeBundle)) {
   cpSync(runtimeBundle, outRuntimeDir, { recursive: true });

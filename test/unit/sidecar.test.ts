@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  daemonProvisioningHint,
   buildSidecarEnv,
   computeBackoffMs,
   defaultEndpoint,
@@ -82,4 +83,9 @@ test("buildSidecarEnv maps embedding config into sidecar environment", () => {
     LIBRAVDB_GATING_CENTROID_K: "10",
     LIBRAVDB_LIFECYCLE_JOURNAL_MAX_ENTRIES: "250",
   });
+});
+
+test("daemonProvisioningHint explains the npm vs Homebrew split", () => {
+  assert.match(daemonProvisioningHint(), /npm package/);
+  assert.match(daemonProvisioningHint(), /install and start libravdbd separately/);
 });

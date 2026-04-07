@@ -114,10 +114,17 @@ const t5Assets: AssetSpec[] = [
 
 const runtimeSpecs: Record<string, RuntimeSpec> = {
   "darwin-arm64": {
-    archiveName: "onnxruntime-osx-arm64-1.23.0.tgz",
-    url: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-arm64-1.23.0.tgz",
-    archiveSha256: "8182db0ebb5caa21036a3c78178f17fabb98a7916bdab454467c8f4cf34bcfdf",
-    extractedLib: path.join(runtimeDir, "onnxruntime-osx-arm64-1.23.0", "lib", "libonnxruntime.dylib"),
+    archiveName: "onnxruntime-osx-universal2-1.23.0.tgz",
+    url: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-universal2-1.23.0.tgz",
+    archiveChecksumURL: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-universal2-1.23.0.tgz.sha256",
+    extractedLib: path.join(runtimeDir, "onnxruntime-osx-universal2-1.23.0", "lib", "libonnxruntime.dylib"),
+    format: "tgz",
+  },
+  "darwin-x64": {
+    archiveName: "onnxruntime-osx-universal2-1.23.0.tgz",
+    url: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-universal2-1.23.0.tgz",
+    archiveChecksumURL: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-universal2-1.23.0.tgz.sha256",
+    extractedLib: path.join(runtimeDir, "onnxruntime-osx-universal2-1.23.0", "lib", "libonnxruntime.dylib"),
     format: "tgz",
   },
   "linux-x64": {
@@ -125,6 +132,13 @@ const runtimeSpecs: Record<string, RuntimeSpec> = {
     url: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-linux-x64-1.23.0.tgz",
     archiveChecksumURL: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-linux-x64-1.23.0.tgz.sha256",
     extractedLib: path.join(runtimeDir, "onnxruntime-linux-x64-1.23.0", "lib", "libonnxruntime.so"),
+    format: "tgz",
+  },
+  "linux-arm64": {
+    archiveName: "onnxruntime-linux-aarch64-1.23.0.tgz",
+    url: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-linux-aarch64-1.23.0.tgz",
+    archiveChecksumURL: "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-linux-aarch64-1.23.0.tgz.sha256",
+    extractedLib: path.join(runtimeDir, "onnxruntime-linux-aarch64-1.23.0", "lib", "libonnxruntime.so"),
     format: "tgz",
   },
   "win32-x64": {

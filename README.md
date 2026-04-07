@@ -71,6 +71,8 @@ brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
+The Homebrew formula installs the daemon plus the bundled ONNX Runtime, embedding assets, and T5 summarizer assets it needs to boot cleanly on supported platforms.
+
 Then assign the plugin to both required OpenClaw slots in
 `~/.openclaw/openclaw.json`:
 

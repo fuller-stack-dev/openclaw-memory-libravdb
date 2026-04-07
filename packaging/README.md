@@ -21,6 +21,10 @@ the release version and SHA-256 files. If `HOMEBREW_TAP_REPO` and
 `HOMEBREW_TAP_TOKEN` are configured in GitHub Actions, the workflow also updates
 the tap automatically.
 
+The Homebrew formula stages the bundled ONNX Runtime archive, the shipped
+embedding profile assets, and the T5 summarizer bundle into the install prefix
+so the daemon can boot without an extra asset-unpack step.
+
 Expected GitHub configuration:
 
 - repository variable `HOMEBREW_TAP_REPO`, for example `xDarkicex/homebrew-openclaw-libravdb-memory`

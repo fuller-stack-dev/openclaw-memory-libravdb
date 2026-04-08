@@ -63,7 +63,7 @@ export function buildContextEngineFactory(
   }
 
   return {
-    info: { id: "libravdb-memory" },
+    info: { id: "libravdb-memory", name: "LibraVDB Memory", ownsCompaction: true },
     ownsCompaction: true,
     async bootstrap({ sessionId, userId }: ContextBootstrapArgs) {
       const rpc = await getRpc();

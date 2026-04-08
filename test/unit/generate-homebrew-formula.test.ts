@@ -29,13 +29,13 @@ test("buildFormula fills version and checksum placeholders", async () => {
   const { buildFormula } = await loadModule();
   assert.equal(
     buildFormula({
-      version: "1.3.11",
+      version: "9.9.9",
       template: "version \"__VERSION__\"\nsha256 \"__SHA256_DARWIN_ARM64__\"\n",
       checksums: {
         "__SHA256_DARWIN_ARM64__": "e".repeat(64),
       },
     }),
-    `version "1.3.11"\nsha256 "${"e".repeat(64)}"\n`,
+    `version "9.9.9"\nsha256 "${"e".repeat(64)}"\n`,
   );
 });
 

@@ -15,6 +15,7 @@ test("manifest and package metadata satisfy checklist structure", async () => {
     Object.keys(manifest).sort(),
     ["configSchema", "description", "id", "kind", "name", "version"],
   );
+  assert.equal(manifest.version, pkg.version);
 
   assert.ok(Array.isArray(pkg.openclaw?.extensions));
   assert.ok(pkg.openclaw.extensions.includes("./src/index.ts"));

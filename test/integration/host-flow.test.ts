@@ -578,11 +578,9 @@ test("context-engine bootstrap -> ingest -> assemble -> compact host flow", asyn
     message: { role: "user", content: "remember this" },
   });
 
-  const prompt = await memorySection({
+  const prompt = memorySection({
     availableTools: new Set(["memory_search"]),
     citationsMode: "inline",
-    messages: [{ role: "user", content: "what do you know?" }],
-    userId: "u1",
   });
   assert.ok(Array.isArray(prompt));
   assert.match(prompt.join("\n"), /LibraVDB persistent memory is configured/);
@@ -727,10 +725,8 @@ test("real sidecar mid-sized session search benchmark", async (t) => {
         );
 
         for (let i = 0; i < 3; i += 1) {
-          const prompt = await memorySection({
+          const prompt = memorySection({
             availableTools: new Set(["memory_search"]),
-            messages: [{ role: "user", content: queryText }],
-            userId,
           });
           assert.ok(prompt.length > 0);
 
@@ -840,10 +836,8 @@ test("real sidecar session_recall index threshold probe", async (t) => {
         process.stdout.write(`[threshold:${label}] projection_count=${projection.results.length}\n`);
 
         for (let i = 0; i < 2; i += 1) {
-          const prompt = await memorySection({
+          const prompt = memorySection({
             availableTools: new Set(["memory_search"]),
-            messages: [{ role: "user", content: queryText }],
-            userId,
           });
           assert.ok(prompt.length > 0);
 

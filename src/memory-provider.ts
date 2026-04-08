@@ -1,3 +1,4 @@
+import type { MemoryPromptSectionBuilder } from "openclaw/plugin-sdk/plugin-entry";
 import type { PluginConfig, RecallCache, SearchResult } from "./types.js";
 import type { RpcGetter } from "./plugin-runtime.js";
 
@@ -12,17 +13,10 @@ export function buildMemoryPromptSection(
   _getRpc: RpcGetter,
   _cfg: PluginConfig,
   _recallCache: RecallCache<SearchResult>,
-): (params: {
-  availableTools: Set<string>;
-  citationsMode?: string;
-  messages?: Array<{ role: string; content: string }>;
-  userId?: string;
-}) => string[] {
-  return function memoryPromptSection(_params: {
-    availableTools: Set<string>;
-    citationsMode?: string;
-    messages?: Array<{ role: string; content: string }>;
-    userId?: string;
+): MemoryPromptSectionBuilder {
+  return function memoryPromptSection({
+    availableTools: _availableTools,
+    citationsMode: _citationsMode,
   }): string[] {
     // OpenClaw builds the memory prompt section synchronously for embedded runs.
     // Actual retrieval and ranking happen in the context engine during assemble().

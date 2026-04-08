@@ -34,7 +34,7 @@ test("memory prompt section returns string array with static header when no mess
   const getRpc = async () => rpc as never;
 
   const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
-  const result = await memorySection({
+  const result = memorySection({
     availableTools: new Set(["read", "exec"]),
   });
 
@@ -55,8 +55,6 @@ test("memory prompt section stays synchronous and does not perform rpc lookups",
   const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
   const result = memorySection({
     availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "what is the capital of france?" }],
-    userId: "u1",
   });
 
   assert.doesNotThrow(() => [...result], "host spreads the returned section immediately");
@@ -75,10 +73,8 @@ test("memory prompt section returns the static header even when messages exist",
   const getRpc = async () => rpc as never;
 
   const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
-  const result = await memorySection({
+  const result = memorySection({
     availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "test query" }],
-    userId: "u1",
   });
 
   const resultText = result.join("\n");
@@ -95,11 +91,9 @@ test("memory prompt section works with citationsMode", async () => {
   const getRpc = async () => rpc as never;
 
   const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
-  const result = await memorySection({
+  const result = memorySection({
     availableTools: new Set(),
     citationsMode: "inline",
-    messages: [{ role: "user", content: "test" }],
-    userId: "u1",
   });
 
   assert.ok(Array.isArray(result));

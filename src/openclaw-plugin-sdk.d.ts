@@ -1,4 +1,9 @@
 declare module "openclaw/plugin-sdk/plugin-entry" {
+  export type MemoryPromptSectionBuilder = (params: {
+    availableTools: Set<string>;
+    citationsMode?: string;
+  }) => string[];
+
   interface OpenClawCliCommand {
     commands?: OpenClawCliCommand[];
     command(name: string): OpenClawCliCommand;
@@ -18,7 +23,7 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
       warn?(message: string): void;
     };
     registerContextEngine(id: string, factory: () => unknown): void;
-    registerMemoryPromptSection(builder: unknown): void;
+    registerMemoryPromptSection(builder: MemoryPromptSectionBuilder): void;
     registerMemoryFlushPlan?(resolver: unknown): void;
     registerMemoryRuntime?(runtime: unknown): void;
     registerMemoryEmbeddingProvider?(provider: unknown): void;

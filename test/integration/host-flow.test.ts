@@ -1479,7 +1479,7 @@ test("assemble tags personality-bait memory as user-originated recalled context"
   const cfg: PluginConfig = {
     rpcTimeoutMs: 1000,
     topK: 8,
-    tokenBudgetFraction: 0.25,
+    tokenBudgetFraction: 0.5,
   };
 
   const originalCall = rpc.call.bind(rpc);

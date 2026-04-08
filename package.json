@@ -1,6 +1,6 @@
 {
   "name": "@xdarkicex/openclaw-memory-libravdb",
-  "version": "1.3.17",
+  "version": "1.3.18",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -33,6 +33,7 @@
     "probe:session_recall_threshold": "./.ts-toolchain/node_modules/.bin/tsc -p tsconfig.tests.json && OPENCLAW_PROFILE_ASSEMBLE=1 node --test --test-name-pattern=\"real sidecar session_recall index threshold probe\" .ts-build/test/integration/host-flow.test.js",
     "benchmark:longmemeval": "./.ts-toolchain/node_modules/.bin/tsc -p tsconfig.tests.json && node --test .ts-build/test/integration/longmemeval-benchmark.test.js",
     "benchmark:longmemeval:score": "node scripts/longmemeval-score.mjs",
+    "benchmark:longmemeval:diagnose": "node scripts/longmemeval-diagnose.mjs",
     "build:daemon": "bash scripts/build-daemon.sh"
   },
   "dependencies": {

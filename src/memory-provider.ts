@@ -3,8 +3,8 @@ import type { RpcGetter } from "./plugin-runtime.js";
 
 const MEMORY_PROMPT_HEADER = [
   "## Memory",
-  "LibraVDB persistent memory is active. Recalled memories will appear",
-  "in context via the context-engine assembler when relevant.",
+  "LibraVDB persistent memory is configured. Recalled memories may appear",
+  "in context via the context-engine assembler when available and relevant.",
   "",
 ] as const;
 

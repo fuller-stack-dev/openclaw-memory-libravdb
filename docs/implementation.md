@@ -18,8 +18,8 @@ Why:
   - `ingest`
   - `assemble`
   - `compact`
-- the lightweight memory prompt section remains useful as a separate early
-  durable-recall pass
+- the lightweight memory prompt section remains useful as a synchronous
+  capability/header hook while durable recall stays in `assemble`
 
 This is why the code registers both `registerContextEngine("libravdb-memory", …)`
 and `registerMemoryPromptSection(...)` instead of relying on only one hook.

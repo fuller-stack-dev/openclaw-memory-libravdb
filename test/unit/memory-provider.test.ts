@@ -46,19 +46,20 @@ test("memory prompt section returns string array with static header when no mess
   assert.ok(result.some((line) => line.toLowerCase().includes("memory")));
 });
 
-test("memory prompt section stays synchronous and does not perform rpc lookups", async () => {
+test("memory prompt section stays synchronous and does not perform rpc lookups", () => {
   const rpc = new FakeRpc();
   const recallCache = createRecallCache<SearchResult>();
   const cfg: PluginConfig = { topK: 8 };
   const getRpc = async () => rpc as never;
 
   const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
-  const result = await memorySection({
+  const result = memorySection({
     availableTools: new Set(["memory_search"]),
     messages: [{ role: "user", content: "what is the capital of france?" }],
     userId: "u1",
   });
 
+  assert.doesNotThrow(() => [...result], "host spreads the returned section immediately");
   assert.ok(Array.isArray(result), "result should be an array");
   assert.ok(result.length > 0, "result should not be empty");
   assert.equal(rpc.calls.get("search_text") ?? 0, 0, "should not perform search_text calls");
@@ -81,7 +82,7 @@ test("memory prompt section returns the static header even when messages exist",
   });
 
   const resultText = result.join("\n");
-  assert.ok(resultText.includes("LibraVDB persistent memory is active"), "should include memory header");
+  assert.ok(resultText.includes("LibraVDB persistent memory is configured"), "should include memory header");
   assert.ok(!resultText.includes("recalled_memories"), "should not inject recalled memories directly");
   assert.ok(!resultText.includes("user recall") && !resultText.includes("global recall"), "should not render recall items");
   assert.equal(rpc.calls.get("search_text") ?? 0, 0, "should not perform search_text calls");

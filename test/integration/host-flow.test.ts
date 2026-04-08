@@ -643,6 +643,41 @@ test("context-engine derives the durable namespace from sessionKey when userId i
   assert.equal(userInsert?.metadata?.userId, durableNamespace);
 });
 
+test("afterTurn ingests the current user prompt even when OpenClaw persists it before post-turn ingest", async () => {
+  const rpc = new FakeRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    useSessionRecallProjection: true,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+  const sessionKey = "agent:main:main";
+  const durableNamespace = resolveDurableNamespace({ sessionKey });
+
+  await context.bootstrap({ sessionId: "s1", sessionKey });
+  await context.afterTurn({
+    sessionId: "s1",
+    sessionKey,
+    prePromptMessageCount: 2,
+    messages: [
+      { role: "assistant", content: "older context" },
+      { role: "user", content: "remember this through afterTurn" },
+      { role: "assistant", content: "stored" },
+    ],
+  });
+
+  const sessionTexts = rpc.inserted
+    .filter((item) => item.collection === "session:s1")
+    .map((item) => item.text);
+  assert.deepEqual(sessionTexts, ["remember this through afterTurn", "stored"]);
+  assert.ok(rpc.inserted.some((item) => item.collection === `turns:${durableNamespace}` && item.text === "remember this through afterTurn"));
+  assert.ok(rpc.inserted.some((item) => item.collection === `user:${durableNamespace}` && item.text === "remember this through afterTurn"));
+  assert.ok(!rpc.inserted.some((item) => item.collection === `turns:${durableNamespace}` && item.text === "stored"));
+});
+
 test("assemble uses the sessionKey-derived durable namespace without changing retrieval weighting", async () => {
   const rpc = new ProjectionStoreRpc();
   const recallCache = createRecallCache<SearchResult>();

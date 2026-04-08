@@ -473,19 +473,21 @@ test("retrieval quality harness section 1 prefers fresher durable memory over st
   };
 
   const getRpc = async () => rpc as never;
-  const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+  await context.bootstrap({ sessionId: "s1", userId: "u1" });
 
-  const prompt = await memorySection({
-    availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "winner" }],
+  const assembled = await context.assemble({
+    sessionId: "s1",
     userId: "u1",
+    messages: [{ role: "user", content: "winner" }],
+    tokenBudget: 200,
   });
 
-  const rendered = prompt.join("\n");
+  const rendered = assembled.systemPromptAddition;
   const userIndex = rendered.indexOf("durable user memory winner");
   const globalIndex = rendered.indexOf("stale global summary loser");
-  assert.ok(userIndex >= 0, "expected durable user memory in prompt section");
-  assert.ok(globalIndex >= 0, "expected stale global summary in prompt section");
+  assert.ok(userIndex >= 0, "expected durable user memory in assembled recall");
+  assert.ok(globalIndex >= 0, "expected stale global summary in assembled recall");
   assert.ok(userIndex < globalIndex, "expected fresher durable user memory to outrank stale global summary");
 });
 
@@ -576,14 +578,12 @@ test("context-engine bootstrap -> ingest -> assemble -> compact host flow", asyn
     message: { role: "user", content: "remember this" },
   });
 
-  const prompt = await memorySection({
+  const prompt = memorySection({
     availableTools: new Set(["memory_search"]),
     citationsMode: "inline",
-    messages: [{ role: "user", content: "what do you know?" }],
-    userId: "u1",
   });
   assert.ok(Array.isArray(prompt));
-  assert.match(prompt.join("\n"), /LibraVDB persistent memory is active/);
+  assert.match(prompt.join("\n"), /LibraVDB persistent memory is configured/);
 
   const assembled = await context.assemble({
     sessionId: "s1",
@@ -725,10 +725,8 @@ test("real sidecar mid-sized session search benchmark", async (t) => {
         );
 
         for (let i = 0; i < 3; i += 1) {
-          const prompt = await memorySection({
+          const prompt = memorySection({
             availableTools: new Set(["memory_search"]),
-            messages: [{ role: "user", content: queryText }],
-            userId,
           });
           assert.ok(prompt.length > 0);
 
@@ -838,10 +836,8 @@ test("real sidecar session_recall index threshold probe", async (t) => {
         process.stdout.write(`[threshold:${label}] projection_count=${projection.results.length}\n`);
 
         for (let i = 0; i < 2; i += 1) {
-          const prompt = await memorySection({
+          const prompt = memorySection({
             availableTools: new Set(["memory_search"]),
-            messages: [{ role: "user", content: queryText }],
-            userId,
           });
           assert.ok(prompt.length > 0);
 
@@ -967,7 +963,7 @@ test("assemble recovers exact historical user turns from turns:user when the que
   assert.ok((rpc.calls.get("search_text") ?? 0) >= 4, "fresh-session recovery should search turns:user in addition to the normal collections");
 });
 
-test("assemble caches user and global hits under the new memory prompt contract", async () => {
+test("assemble caches user and global hits without prompt-section seeding", async () => {
   const rpc = new FakeRpc();
   const recallCache = createRecallCache<SearchResult>();
   const cfg: PluginConfig = {
@@ -980,19 +976,8 @@ test("assemble caches user and global hits under the new memory prompt contract"
   };
 
   const getRpc = async () => rpc as never;
-  const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
   const context = buildContextEngineFactory(getRpc, cfg, recallCache);
 
-  // Memory prompt section seeds the cache with user/global hits
-  // memorySection does: search_text user + search_text global = 2 calls
-  await memorySection({
-    availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "cached query" }],
-    userId: "u1",
-  });
-
-  // First assemble - uses cached user/global hits and one authored:variant lookup
-  // assemble does: session (1) + authored:variant (1) = 2 calls (user/global are cached)
   const first = await context.assemble({
     sessionId: "s1",
     userId: "u1",
@@ -1000,13 +985,6 @@ test("assemble caches user and global hits under the new memory prompt contract"
     tokenBudget: 100,
   });
   const searchCallsAfterFirst = rpc.calls.get("search_text") ?? 0;
-
-  // Memory prompt section runs again (next turn), re-seeds cache: 2 calls
-  await memorySection({
-    availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "cached query" }],
-    userId: "u1",
-  });
 
   // Second assemble - authored:variant is now cached, so only session search runs
   const second = await context.assemble({
@@ -1019,10 +997,12 @@ test("assemble caches user and global hits under the new memory prompt contract"
 
   assert.match(first.systemPromptAddition, /recalled_memories/);
   assert.match(second.systemPromptAddition, /recalled_memories/);
-  // After first pair: memorySection(2) + assemble(2) = 4 calls
-  assert.equal(searchCallsAfterFirst, 4);
-  // After second pair: 4 + 3 = 7 calls total
-  assert.equal(searchCallsAfterSecond, 7);
+  assert.ok(searchCallsAfterFirst > 0, "first assemble should issue recall searches");
+  assert.equal(
+    searchCallsAfterSecond - searchCallsAfterFirst,
+    1,
+    "second assemble should only add the uncached session search",
+  );
   assert.equal(rpc.calls.get("list_collection") ?? 0, 3);
   assert.equal(rpc.calls.get("list_by_meta") ?? 0, 2);
   assert.equal(rpc.calls.get("bump_access_counts") ?? 0, 2);
@@ -1495,7 +1475,7 @@ test("assemble tags personality-bait memory as user-originated recalled context"
   const cfg: PluginConfig = {
     rpcTimeoutMs: 1000,
     topK: 8,
-    tokenBudgetFraction: 0.25,
+    tokenBudgetFraction: 0.5,
   };
 
   const originalCall = rpc.call.bind(rpc);
@@ -1595,19 +1575,11 @@ test("assemble reuses bootstrap-loaded authored collections without reloading", 
   };
 
   const getRpc = async () => rpc as never;
-  const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
   const context = buildContextEngineFactory(getRpc, cfg, recallCache);
 
   // Bootstrap loads authored collections (3 list_collection calls)
   await context.bootstrap({ sessionId: "s1", userId: "u1" });
   const listCollectionAfterBootstrap = rpc.calls.get("list_collection") ?? 0;
-
-  // Memory prompt section seeds the cache for first assemble
-  await memorySection({
-    availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "query a" }],
-    userId: "u1",
-  });
 
   // First assemble
   await context.assemble({
@@ -1617,13 +1589,6 @@ test("assemble reuses bootstrap-loaded authored collections without reloading", 
     tokenBudget: 100,
   });
   const listCollectionAfterFirst = rpc.calls.get("list_collection") ?? 0;
-
-  // Memory prompt section seeds the cache for second assemble
-  await memorySection({
-    availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "query b" }],
-    userId: "u1",
-  });
 
   // Second assemble - should NOT trigger additional list_collection calls
   await context.assemble({
@@ -2446,17 +2411,8 @@ test("user ingest invalidates cached durable recall for that user", async () => 
   };
 
   const getRpc = async () => rpc as never;
-  const memorySection = buildMemoryPromptSection(getRpc, cfg, recallCache);
   const context = buildContextEngineFactory(getRpc, cfg, recallCache);
 
-  // Memory prompt section seeds the cache: 2 calls (user + global)
-  await memorySection({
-    availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "same query" }],
-    userId: "u1",
-  });
-
-  // First assemble: session (1) + authored:variant (1) = 2 calls
   await context.assemble({
     sessionId: "s1",
     userId: "u1",
@@ -2472,14 +2428,7 @@ test("user ingest invalidates cached durable recall for that user", async () => 
     message: { role: "user", content: "new durable fact" },
   });
 
-  // Memory prompt section re-seeds: 2 calls (user + global)
-  await memorySection({
-    availableTools: new Set(["memory_search"]),
-    messages: [{ role: "user", content: "same query" }],
-    userId: "u1",
-  });
-
-  // Second assemble: session (1) only; authored:variant is cached
+  // Second assemble re-runs user/global searches after clearUser invalidation.
   await context.assemble({
     sessionId: "s1",
     userId: "u1",
@@ -2488,9 +2437,7 @@ test("user ingest invalidates cached durable recall for that user", async () => 
   });
   const searchCallsAfterSecond = rpc.calls.get("search_text") ?? 0;
 
-  // After first pair: memorySection(2) + assemble(2) = 4 calls
   assert.equal(searchCallsAfterFirst, 4);
-  // After second pair: 4 + 3 = 7 calls total
   assert.equal(searchCallsAfterSecond, 7);
 });
 

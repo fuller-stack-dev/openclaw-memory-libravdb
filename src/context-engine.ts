@@ -19,6 +19,7 @@ import {
 } from "./temporal.js";
 import type { TemporalRecoveryRankingResult } from "./temporal.js";
 import { countTokens, estimateTokens, fitPromptBudget, fitPromptBudgetFirstFit } from "./tokens.js";
+import { resolveDurableNamespace } from "./durable-namespace.js";
 import type { RpcGetter } from "./plugin-runtime.js";
 import type {
   ContextAssembleArgs,
@@ -53,7 +54,7 @@ export function buildContextEngineFactory(
   let authoredVariantCache: SearchResult[] | null = null;
   const authoredVariantRecallCache = new Map<string, SearchResult[]>();
 
-  // Session-scoped elevated-guidance cache keyed by sessionId + generation + userId + queryText
+  // Session-scoped elevated-guidance cache keyed by sessionId + generation + durable namespace + queryText
   const elevatedRecallCache = new Map<string, SearchResult[]>();
   const elevatedRecallGeneration = new Map<string, number>();
 
@@ -65,7 +66,8 @@ export function buildContextEngineFactory(
   return {
     info: { id: "libravdb-memory", name: "LibraVDB Memory", ownsCompaction: true },
     ownsCompaction: true,
-    async bootstrap({ sessionId, userId }: ContextBootstrapArgs) {
+    async bootstrap({ sessionId, sessionKey, userId }: ContextBootstrapArgs) {
+      const durableNamespace = resolveDurableNamespace({ userId, sessionKey });
       const rpc = await getRpc();
       await rpc.call("ensure_collections", {
         collections: [
@@ -75,8 +77,8 @@ export function buildContextEngineFactory(
           sessionEdgeCollection(sessionId),
           sessionStateCollection(sessionId),
           ...(useSessionRecallProjection(cfg) ? [sessionRecallCollection(sessionId)] : []),
-          `turns:${userId}`,
-          `user:${userId}`,
+          `turns:${durableNamespace}`,
+          `user:${durableNamespace}`,
           "global",
           AUTHORED_HARD_COLLECTION,
           AUTHORED_SOFT_COLLECTION,
@@ -98,17 +100,18 @@ export function buildContextEngineFactory(
       validateSection7StartupHardReserve(cfg, authoredHard);
       return { ok: true };
     },
-    async ingest({ sessionId, userId, message, isHeartbeat }: ContextIngestArgs) {
+    async ingest({ sessionId, sessionKey, userId, message, isHeartbeat }: ContextIngestArgs) {
       if (isHeartbeat) {
         return { ingested: false };
       }
 
       const rpc = await getRpc();
       const ts = Date.now();
+      const durableNamespace = resolveDurableNamespace({ userId, sessionKey });
       const sessionMeta = {
         role: message.role,
         ts,
-        userId,
+        userId: durableNamespace,
         sessionId,
         type: "turn",
         provenance_class: "session_turn",
@@ -136,10 +139,10 @@ export function buildContextEngineFactory(
 
       if (message.role === "user") {
         try {
-          recallCache.clearUser(userId);
+          recallCache.clearUser(durableNamespace);
           await rpc.call("insert_text", {
-            collection: `turns:${userId}`,
-            id: `${userId}:${ts}`,
+            collection: `turns:${durableNamespace}`,
+            id: `${durableNamespace}:${ts}`,
             text: message.content,
             metadata: {
               ...sessionMeta,
@@ -148,21 +151,21 @@ export function buildContextEngineFactory(
           });
 
           const gating = await rpc.call<GatingResult>("gating_scalar", {
-            userId,
+            userId: durableNamespace,
             text: message.content,
           });
 
           if (gating.g >= (cfg.ingestionGateThreshold ?? 0.35)) {
             void rpc.call("insert_text", {
-              collection: `user:${userId}`,
-              id: `${userId}:${ts}`,
+              collection: `user:${durableNamespace}`,
+              id: `${durableNamespace}:${ts}`,
               text: message.content,
               metadata: {
                 role: message.role,
                 ts,
                 sessionId,
                 type: "turn",
-                userId,
+                userId: durableNamespace,
                 provenance_class: "durable_user_memory",
                 stability_weight: Math.max(stabilityWeightForMessage(message.role), gating.g),
                 gating_score: gating.g,
@@ -185,9 +188,10 @@ export function buildContextEngineFactory(
 
       return { ingested: true };
     },
-    async assemble({ sessionId, userId, messages, tokenBudget }: ContextAssembleArgs) {
+    async assemble({ sessionId, sessionKey, userId, messages, tokenBudget }: ContextAssembleArgs) {
       const PROFILE = process.env.OPENCLAW_PROFILE_ASSEMBLE === "1";
       const DEBUG_RECOVERY = process.env.LONGMEMEVAL_DEBUG_RANKING === "1";
+      const durableNamespace = resolveDurableNamespace({ userId, sessionKey });
 
       const queryText = messages.at(-1)?.content ?? "";
       if (!queryText) {
@@ -201,7 +205,7 @@ export function buildContextEngineFactory(
       const temporalSelectorGuard = decideTemporalSelectorGuard(queryText, temporalQuery);
 
       const excluded = recentIds(messages, 4);
-      const cached = recallCache.take({ userId, queryText });
+      const cached = recallCache.take({ userId: durableNamespace, queryText });
 
       const rpc = await getRpc();
 
@@ -265,7 +269,7 @@ export function buildContextEngineFactory(
           temporalQuery,
           temporalSelectorGuard,
           sessionId,
-          userId,
+          userId: durableNamespace,
           messages,
           tokenBudget,
           profiler,

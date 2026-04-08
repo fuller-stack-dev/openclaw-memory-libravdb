@@ -174,19 +174,22 @@ export interface RecallCache<T = unknown> {
 
 export interface ContextBootstrapArgs {
   sessionId: string;
-  userId: string;
+  sessionKey?: string;
+  userId?: string;
 }
 
 export interface ContextIngestArgs {
   sessionId: string;
-  userId: string;
+  sessionKey?: string;
+  userId?: string;
   message: MemoryMessage;
   isHeartbeat?: boolean;
 }
 
 export interface ContextAssembleArgs {
   sessionId: string;
-  userId: string;
+  sessionKey?: string;
+  userId?: string;
   messages: MemoryMessage[];
   tokenBudget: number;
 }

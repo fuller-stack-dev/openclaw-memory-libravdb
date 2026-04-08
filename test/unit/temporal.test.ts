@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  decideTemporalSelectorGuard,
   detectTemporalQuerySignal,
   getTemporalAnchorDensity,
   rankTemporalRecoveryCandidates,
@@ -27,6 +28,25 @@ test("detectTemporalQuerySignal stays inactive on non-temporal queries", () => {
   assert.equal(signal.active, false);
   assert.equal(signal.indicator, 0);
   assert.deepEqual(signal.matchedPatterns, []);
+});
+
+test("decideTemporalSelectorGuard applies only to strong two-slot temporal queries", () => {
+  const twoSlot = decideTemporalSelectorGuard(
+    "How many days did it take for me to find a house I loved after starting to work with Rachel?",
+  );
+  const weakFirstOnly = decideTemporalSelectorGuard(
+    "Which event did I attend first, the Effective Time Management workshop or the Data Analysis using Python webinar?",
+  );
+  const overFragmented = decideTemporalSelectorGuard(
+    "How many days had passed between the Sunday mass at St. Mary's Church and the Ash Wednesday service at the cathedral?",
+  );
+
+  assert.equal(twoSlot.shouldApply, true);
+  assert.equal(twoSlot.slots.length, 2);
+  assert.equal(weakFirstOnly.shouldApply, false);
+  assert.match(weakFirstOnly.reason, /strong compositional temporal pattern/);
+  assert.equal(overFragmented.shouldApply, false);
+  assert.match(overFragmented.reason, /exactly two temporal slots/);
 });
 
 test("getTemporalAnchorDensity is bounded and saturates on anchor-rich text", () => {

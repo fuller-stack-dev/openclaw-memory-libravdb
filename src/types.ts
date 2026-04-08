@@ -217,6 +217,8 @@ export interface ContextAssembleResult {
     temporalQueryIndicator?: number;
     temporalQueryActive?: boolean;
     temporalQueryPatterns?: string[];
+    temporalSelectorApplied?: boolean;
+    temporalSelectorReason?: string;
     temporalRecoverySlots?: string[];
   };
 }

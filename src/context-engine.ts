@@ -12,7 +12,11 @@ import {
   rankSection7VariantCandidates,
 } from "./scoring.js";
 import { buildInjectedMemoryMessageContent, buildMemoryHeader, recentIds } from "./recall-utils.js";
-import { detectTemporalQuerySignal, rankTemporalRecoveryCandidates } from "./temporal.js";
+import {
+  decideTemporalSelectorGuard,
+  detectTemporalQuerySignal,
+  rankTemporalRecoveryCandidates,
+} from "./temporal.js";
 import type { TemporalRecoveryRankingResult } from "./temporal.js";
 import { countTokens, estimateTokens, fitPromptBudget, fitPromptBudgetFirstFit } from "./tokens.js";
 import type { RpcGetter } from "./plugin-runtime.js";
@@ -194,6 +198,7 @@ export function buildContextEngineFactory(
         } satisfies ContextAssembleResult;
       }
       const temporalQuery = detectTemporalQuerySignal(queryText);
+      const temporalSelectorGuard = decideTemporalSelectorGuard(queryText, temporalQuery);
 
       const excluded = recentIds(messages, 4);
       const cached = recallCache.take({ userId, queryText });
@@ -258,6 +263,7 @@ export function buildContextEngineFactory(
           excluded,
           queryText,
           temporalQuery,
+          temporalSelectorGuard,
           sessionId,
           userId,
           messages,
@@ -293,6 +299,7 @@ export function buildContextEngineFactory(
       excluded,
       queryText,
       temporalQuery,
+      temporalSelectorGuard,
       sessionId,
       userId,
       messages,
@@ -310,6 +317,7 @@ export function buildContextEngineFactory(
       excluded: string[];
       queryText: string;
       temporalQuery: ReturnType<typeof detectTemporalQuerySignal>;
+      temporalSelectorGuard: ReturnType<typeof decideTemporalSelectorGuard>;
       sessionId: string;
       userId: string;
       messages: Array<{ role: string; content: string }>;
@@ -608,7 +616,7 @@ export function buildContextEngineFactory(
             excludeIds: recoveryExcludeIDs,
           });
           const annotatedUserResults = annotateCollection(rawUserResults.results ?? [], `turns:${userId}`);
-          temporalRecoveryResult = temporalQuery.active
+          temporalRecoveryResult = temporalSelectorGuard.shouldApply
             ? rankTemporalRecoveryCandidates(annotatedUserResults, {
                 queryText,
                 maxSelected: 3,
@@ -709,6 +717,8 @@ export function buildContextEngineFactory(
               temporalQueryIndicator: temporalQuery.indicator,
               temporalQueryActive: temporalQuery.active,
               temporalQueryPatterns: temporalQuery.matchedPatterns,
+              temporalSelectorApplied: temporalSelectorGuard.shouldApply,
+              temporalSelectorReason: temporalSelectorGuard.reason,
               temporalRecoverySlots: temporalRecoveryResult?.slots,
               rawUserRecoveryCandidates: rawUserRecoveryDebug,
             }

@@ -112,6 +112,12 @@ export interface TemporalQuerySignal {
   matchedPatterns: string[];
 }
 
+export interface TemporalSelectorGuardDecision {
+  shouldApply: boolean;
+  slots: string[];
+  reason: string;
+}
+
 export interface TemporalRecoveryDebugCandidate {
   id: string;
   text: string;
@@ -274,6 +280,48 @@ export function rankTemporalRecoveryCandidates(
     }));
 
   return { ranked, debug, temporalQuery, slots };
+}
+
+export function decideTemporalSelectorGuard(
+  queryText: string,
+  temporalQuery: TemporalQuerySignal = detectTemporalQuerySignal(queryText),
+): TemporalSelectorGuardDecision {
+  const slots = extractTemporalSlots(queryText);
+  if (!temporalQuery.active) {
+    return {
+      shouldApply: false,
+      slots,
+      reason: "temporal query gate inactive",
+    };
+  }
+
+  const strongCompositionalPattern = temporalQuery.matchedPatterns.some((pattern) =>
+    pattern === "how many days" ||
+    pattern === "how long" ||
+    pattern === "before or after" ||
+    pattern === "since or between"
+  );
+  if (!strongCompositionalPattern) {
+    return {
+      shouldApply: false,
+      slots,
+      reason: "query lacks strong compositional temporal pattern",
+    };
+  }
+
+  if (slots.length !== 2) {
+    return {
+      shouldApply: false,
+      slots,
+      reason: "query did not resolve to exactly two temporal slots",
+    };
+  }
+
+  return {
+    shouldApply: true,
+    slots,
+    reason: "strong temporal query with two-slot decomposition",
+  };
 }
 
 export function resetTemporalCachesForTest(): void {

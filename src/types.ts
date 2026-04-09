@@ -172,24 +172,20 @@ export interface RecallCache<T = unknown> {
   clearUser(userId: string): void;
 }
 
-export interface ContextBootstrapArgs {
+export interface ContextNamespaceArgs {
   sessionId: string;
   sessionKey?: string;
   userId?: string;
 }
 
-export interface ContextIngestArgs {
-  sessionId: string;
-  sessionKey?: string;
-  userId?: string;
+export interface ContextBootstrapArgs extends ContextNamespaceArgs {}
+
+export interface ContextIngestArgs extends ContextNamespaceArgs {
   message: MemoryMessage;
   isHeartbeat?: boolean;
 }
 
-export interface ContextAssembleArgs {
-  sessionId: string;
-  sessionKey?: string;
-  userId?: string;
+export interface ContextAssembleArgs extends ContextNamespaceArgs {
   messages: MemoryMessage[];
   tokenBudget: number;
 }

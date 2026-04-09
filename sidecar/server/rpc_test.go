@@ -636,3 +636,52 @@ func TestRPCExportMemoryAndFlushNamespace(t *testing.T) {
 		t.Fatalf("expected user:u2 to remain intact, got %+v", u2)
 	}
 }
+
+func TestRPCExportMemoryAndFlushNamespaceNamespaceParam(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.libravdb"), fakeEmbedder{})
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	srv := New(fakeEmbedder{}, nil, nil, st, compact.DefaultGatingConfig(), 500)
+
+	namespace := "session-key:fixed-session"
+	if err := st.InsertText(ctx, "user:"+namespace, "a", "memory-match", map[string]any{"userId": namespace}); err != nil {
+		t.Fatalf("namespace insert error = %v", err)
+	}
+	if err := st.InsertText(ctx, "user:u2", "b", "memory-match", map[string]any{"userId": "u2"}); err != nil {
+		t.Fatalf("u2 insert error = %v", err)
+	}
+
+	exportedRaw, err := srv.Call(ctx, "export_memory", map[string]any{"namespace": namespace})
+	if err != nil {
+		t.Fatalf("export_memory error = %v", err)
+	}
+	exported, ok := exportedRaw.(exportMemoryResult)
+	if !ok {
+		t.Fatalf("expected exportMemoryResult, got %T", exportedRaw)
+	}
+	if len(exported.Records) != 1 || exported.Records[0].Collection != "user:"+namespace || exported.Records[0].ID != "a" {
+		t.Fatalf("unexpected export records: %+v", exported.Records)
+	}
+
+	if _, err := srv.Call(ctx, "flush_namespace", map[string]any{"namespace": namespace}); err != nil {
+		t.Fatalf("flush_namespace error = %v", err)
+	}
+
+	items, err := st.ListCollection(ctx, "user:"+namespace)
+	if err != nil {
+		t.Fatalf("ListCollection(user:%s) error = %v", namespace, err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected user:%s to be empty after flush, got %+v", namespace, items)
+	}
+
+	u2, err := st.ListCollection(ctx, "user:u2")
+	if err != nil {
+		t.Fatalf("ListCollection(user:u2) error = %v", err)
+	}
+	if len(u2) != 1 || u2[0].ID != "b" {
+		t.Fatalf("expected user:u2 to remain intact, got %+v", u2)
+	}
+}

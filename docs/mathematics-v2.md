@@ -203,10 +203,10 @@ config — do not change the decay formula itself.
 This makes session context fade fastest, durable namespace memory fade more slowly, and
 global memory remain the most stable.
 
-When the host supplies an explicit `userId`, the durable namespace is that
-user id. On current OpenClaw releases, the plugin falls back to a stable
-session-key-derived durable namespace so the retrieval math and scope weighting
-stay unchanged even when the host does not expose a separate user principal.
+When the host supplies an explicit `userId`, the durable namespace matches that
+`userId`. When the host does not provide a `userId`, the plugin derives a stable
+durable namespace from the session key so the retrieval math and scope
+weighting stay unchanged even when the host does not expose a separate user principal.
 
 **Note on symbol disambiguation.** The symbol $\lambda_s$ here denotes the
 scope-specific recency decay constant with units $\mathrm{s}^{-1}$. Section 7.3

@@ -61,10 +61,9 @@ function createMemorySearchManager(
 
   return {
     async search(queryOrParams: string | MemorySearchParams = {}, opts: MemorySearchParams = {}) {
-      const legacyCall = typeof queryOrParams !== "string";
+      const legacyCall = typeof queryOrParams === "string";
       const params = legacyCall
-        ? queryOrParams
-        : {
+        ? {
             query: queryOrParams,
             limit: opts.limit ?? opts.k ?? opts.topK,
             sessionId: opts.sessionId,
@@ -72,7 +71,8 @@ function createMemorySearchManager(
             userId: opts.userId,
             agentId: opts.agentId,
             context: opts.context,
-          } satisfies MemorySearchParams;
+          }
+        : queryOrParams;
       const queryText = firstString(params.query, params.text, params.input, params.q);
       if (!queryText) {
         return legacyCall ? { results: [], error: "Missing query text for LibraVDB memory search" } : [];
@@ -199,7 +199,7 @@ async function loadSearchResultText(getRpc: RpcGetter, relPath: string): Promise
 }
 
 function encodeSearchResultPath(collection: string, id: string): string {
-  return `${collection}::${encodeURIComponent(id)}`;
+  return `${encodeURIComponent(collection)}::${encodeURIComponent(id)}`;
 }
 
 function decodeSearchResultPath(relPath: string): { collection: string; id: string } {
@@ -208,7 +208,7 @@ function decodeSearchResultPath(relPath: string): { collection: string; id: stri
     throw new Error(`Unsupported LibraVDB memory path: ${relPath}`);
   }
   return {
-    collection: relPath.slice(0, separator),
+    collection: decodeURIComponent(relPath.slice(0, separator)),
     id: decodeURIComponent(relPath.slice(separator + 2)),
   };
 }

@@ -22,9 +22,13 @@ export function resolveDurableNamespace(params: {
     return `${AGENT_ID_NAMESPACE_PREFIX}${agentId}`;
   }
 
-  return params.fallback ?? "default";
+  return firstNonEmpty(params.fallback) ?? "default";
 }
 
 function firstNonEmpty(value: string | undefined): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

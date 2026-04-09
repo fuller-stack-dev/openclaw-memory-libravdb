@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveDurableNamespace } from "../../src/durable-namespace.js";
 import { buildMemoryRuntimeBridge } from "../../src/memory-runtime.js";
 import type { PluginConfig, SearchResult } from "../../src/types.js";
 
@@ -13,16 +12,19 @@ class FakeRpc {
 
     switch (method) {
       case "search_text_collections":
+        {
+          const collections = params.collections as string[] | undefined;
         return {
           results: [
             {
               id: "m1",
               score: 0.91,
               text: "remembered item",
-              metadata: { collection: "user:u1" },
+              metadata: { collection: collections?.[0] ?? "user:u1" },
             },
           ],
         } as T;
+        }
       case "status":
         return {
           ok: true,
@@ -32,6 +34,17 @@ class FakeRpc {
           gatingThreshold: 0.35,
           abstractiveReady: false,
           embeddingProfile: "nomic-embed-text-v1.5",
+        } as T;
+      case "list_collection":
+        return {
+          results: [
+            {
+              id: "m1",
+              score: 0.91,
+              text: "remembered item",
+              metadata: { collection: String(params.collection) },
+            },
+          ],
         } as T;
       default:
         throw new Error(`unexpected rpc method: ${method}`);
@@ -43,20 +56,45 @@ test("memory runtime bridge searches the resolved durable namespace under the la
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { topK: 6, useSessionRecallProjection: true };
   const runtime = buildMemoryRuntimeBridge(async () => rpc as never, cfg);
-  const { manager } = await runtime.getMemorySearchManager({ agentId: "u1" });
-  const sessionKey = "agent:main:cli:memory-search";
-  const namespace = resolveDurableNamespace({ sessionKey, agentId: "u1" });
+  const { manager } = await runtime.getMemorySearchManager();
+  const sessionKey = "fixed-session";
 
-  const result = await manager.search("find prior context", { sessionKey });
+  const result = await manager.search({ query: "find prior context", sessionKey });
   assert.ok(Array.isArray(result));
 
   assert.equal(rpc.calls[0]?.method, "status");
   assert.equal(rpc.calls[1]?.method, "search_text_collections");
-  assert.deepEqual(rpc.calls[1]?.params.collections, [`user:${namespace}`, "global"]);
+  assert.deepEqual(rpc.calls[1]?.params.collections, ["user:session-key:fixed-session", "global"]);
   assert.equal(rpc.calls[1]?.params.k, 6);
   assert.equal(result.length, 1);
   assert.equal(result[0]?.snippet, "remembered item");
   assert.equal(result[0]?.source, "memory");
+});
+
+test("memory runtime bridge keeps the legacy string search shape", async () => {
+  const rpc = new FakeRpc();
+  const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {});
+  const { manager } = await runtime.getMemorySearchManager();
+
+  const result = await manager.search("find prior context", { sessionKey: "fixed-session" }) as {
+    results: Array<{ content: string }>;
+  };
+
+  assert.equal(Array.isArray(result), false);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]?.content, "remembered item");
+});
+
+test("memory runtime bridge round-trips encoded collection names in result paths", async () => {
+  const rpc = new FakeRpc();
+  const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {});
+  const { manager } = await runtime.getMemorySearchManager();
+
+  const result = await manager.search({ query: "find prior context", userId: "u1::nested" }) as Array<{ path: string }>;
+  const path = result[0]?.path;
+  assert.equal(typeof path, "string");
+  const loaded = await manager.readFile({ relPath: path ?? "", from: 1, lines: 1 });
+  assert.equal(loaded.text, "remembered item");
 });
 
 test("memory runtime bridge exposes cached status and keeps legacy helpers delegated", async () => {

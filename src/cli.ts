@@ -159,7 +159,7 @@ async function runFlush(runtime: PluginRuntime, opts: CliOptionBag | undefined, 
   }
 
   if (!opts?.yes) {
-    const confirmed = await confirm(`Delete durable memory collection user:${namespace}? [y/N] `);
+    const confirmed = await confirm(`Delete durable memory namespace ${namespace}? [y/N] `);
     if (!confirmed) {
       console.log("Aborted.");
       return;
@@ -168,8 +168,8 @@ async function runFlush(runtime: PluginRuntime, opts: CliOptionBag | undefined, 
 
   try {
     const rpc = await runtime.getRpc();
-    await rpc.call("flush_namespace", { userId: namespace });
-    console.log(`Deleted durable memory namespace user:${namespace}.`);
+    await rpc.call("flush_namespace", { namespace });
+    console.log(`Deleted durable memory namespace ${namespace}.`);
   } catch (error) {
     logger.error(`LibraVDB flush failed: ${formatError(error)}`);
     process.exitCode = 1;
@@ -180,7 +180,7 @@ async function runExport(runtime: PluginRuntime, opts: CliOptionBag | undefined,
   try {
     const rpc = await runtime.getRpc();
     const result = await rpc.call<ExportResult>("export_memory", {
-      userId: resolveCliNamespace(opts),
+      namespace: resolveCliNamespace(opts),
     });
     for (const record of result.records ?? []) {
       stdout.write(`${JSON.stringify(record)}\n`);

@@ -127,9 +127,9 @@ type expandSummaryParams struct {
 }
 
 type queryRawSessionParams struct {
-	SessionID string   `json:"sessionId"`
-	Text     string   `json:"text"`
-	K        int      `json:"k"`
+	SessionID  string   `json:"sessionId"`
+	Text       string   `json:"text"`
+	K          int      `json:"k"`
 	ExcludeIDs []string `json:"excludeIds"`
 }
 
@@ -176,7 +176,8 @@ type gatingScalarParams struct {
 }
 
 type flushNamespaceParams struct {
-	UserID string `json:"userId"`
+	UserID    string `json:"userId"`
+	Namespace string `json:"namespace"`
 }
 
 type memoryStatus struct {
@@ -418,10 +419,7 @@ func (s *Server) handleExportMemory(ctx context.Context, raw any) (any, error) {
 		return nil, err
 	}
 
-	prefix := "user:"
-	if params.UserID != "" {
-		prefix = "user:" + params.UserID
-	}
+	prefix := resolveDurableMemoryCollectionPrefix(params)
 
 	collections := s.Store.CollectionNames()
 	records := make([]exportMemoryRecord, 0)
@@ -454,13 +452,27 @@ func (s *Server) handleFlushNamespace(ctx context.Context, raw any) (any, error)
 	if err := decode(raw, &params); err != nil {
 		return nil, err
 	}
-	if params.UserID == "" {
-		return nil, fmt.Errorf("userId is required")
+	prefix := resolveDurableMemoryCollectionPrefix(params)
+	if prefix == "user:" {
+		return nil, fmt.Errorf("namespace or userId is required")
 	}
-	if err := s.Store.DeleteCollectionsByPrefix(ctx, "user:"+params.UserID); err != nil {
+	if err := s.Store.DeleteCollectionsByPrefix(ctx, prefix); err != nil {
 		return nil, err
 	}
 	return map[string]any{"ok": true}, nil
+}
+
+func resolveDurableMemoryCollectionPrefix(params flushNamespaceParams) string {
+	if namespace := strings.TrimSpace(params.Namespace); namespace != "" {
+		if strings.HasPrefix(namespace, "user:") {
+			return namespace
+		}
+		return "user:" + namespace
+	}
+	if userID := strings.TrimSpace(params.UserID); userID != "" {
+		return "user:" + userID
+	}
+	return "user:"
 }
 
 func (s *Server) handleDelete(ctx context.Context, raw any) (any, error) {

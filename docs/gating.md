@@ -79,11 +79,12 @@ with:
 \[ F(t) = \min\left(\frac{\mathrm{hitsAbove}(\mathrm{turns:u}, 0.80, k=10)}{5}, 1\right) \]
 \[ S(t) = \min\left(\frac{\mathrm{hitsAbove}(\mathrm{user:u}, 0.85, k=5)}{3}, 1\right) \]
 
-where $u$ is the resolved durable namespace used by the host boundary. When the
-host supplies an explicit user id, $u$ is that id. On current OpenClaw
-releases, the plugin falls back to a stable session-key-derived namespace so
-the gate continues to measure repetition and saturation against the same
-durable scope.
+where $u$ is the resolved durable namespace used by the host boundary. The
+resolver chooses $u$ in this order: explicit `userId`, then the
+session-key-derived namespace, then `agentId`, and finally the resolver
+fallback/default when no host identity is available. When the host does not
+provide a `userId`, the gate still measures repetition and saturation against a
+stable durable scope.
 
 Why a product? High input frequency should help only if durable memory is not already saturated. High saturation must veto the repetition term regardless of frequency. The veto property is structural: $S(t) = 1 \Rightarrow R(t) = 0$.
 

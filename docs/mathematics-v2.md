@@ -61,7 +61,7 @@ $$
 S(d)=
 \begin{cases}
 1.0 & \text{if } d \text{ is from the active session} \\
-0.6 & \text{if } d \text{ is from durable user memory} \\
+0.6 & \text{if } d \text{ is from durable namespace memory} \\
 0.3 & \text{if } d \text{ is from global memory}
 \end{cases}
 $$
@@ -182,7 +182,7 @@ product $\lambda_s \Delta t_d$ is dimensionless, as required by the exponential.
 The current implementation uses different constants by scope:
 
 - active session: $\lambda_s = 0.0001$
-- durable user memory: $\lambda_s = 0.00001$
+- durable namespace memory: $\lambda_s = 0.00001$
 - global memory: $\lambda_s = 0.000002$
 
 The implied half-lives make the decay constants auditable at a glance:
@@ -200,8 +200,14 @@ $$
 If those half-lives feel wrong for a given deployment, adjust $\lambda_s$ via
 config — do not change the decay formula itself.
 
-This makes session context fade fastest, user memory fade more slowly, and
+This makes session context fade fastest, durable namespace memory fade more slowly, and
 global memory remain the most stable.
+
+When the host supplies an explicit `userId`, the durable namespace matches that
+`userId`. When the host does not provide a `userId`, the plugin derives a stable
+durable namespace from the session key, or falls back to `session:${sessionId}`
+when both `userId` and `sessionKey` are absent, so the retrieval math and scope
+weighting stay unchanged even when the host does not expose a separate user principal.
 
 **Note on symbol disambiguation.** The symbol $\lambda_s$ here denotes the
 scope-specific recency decay constant with units $\mathrm{s}^{-1}$. Section 7.3

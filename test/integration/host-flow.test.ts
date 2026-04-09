@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildContextEngineFactory } from "../../src/context-engine.js";
+import { resolveDurableNamespace } from "../../src/durable-namespace.js";
 import { acquireTestDaemonHandle } from "./daemon-harness.js";
 import { buildMemoryPromptSection } from "../../src/memory-provider.js";
 import { createPluginRuntime } from "../../src/plugin-runtime.js";
@@ -613,6 +614,231 @@ test("context-engine bootstrap -> ingest -> assemble -> compact host flow", asyn
   assert.equal(userInsert?.metadata?.gating_a, 0.5);
   assert.equal(userInsert?.metadata?.gating_gconv, 0.65);
   assert.equal(userInsert?.metadata?.gating_gtech, 0.85);
+});
+
+test("context-engine derives the durable namespace from sessionKey when userId is absent", async () => {
+  const rpc = new FakeRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    tokenBudgetFraction: 0.25,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+  const sessionKey = "agent:main:channel:conversation";
+  const durableNamespace = resolveDurableNamespace({ sessionKey });
+
+  await context.bootstrap({ sessionId: "s1", sessionKey });
+  await context.ingest({
+    sessionId: "s1",
+    sessionKey,
+    message: { role: "user", content: "remember this" },
+  });
+
+  assert.ok(rpc.inserted.some((item) => item.collection === `turns:${durableNamespace}`));
+  assert.ok(rpc.inserted.some((item) => item.collection === `user:${durableNamespace}`));
+  const userInsert = rpc.inserted.find((item) => item.collection === `user:${durableNamespace}`);
+  assert.equal(userInsert?.metadata?.userId, durableNamespace);
+});
+
+test("context-engine falls back to a session-scoped durable namespace when userId and sessionKey are absent", async () => {
+  const rpc = new FakeRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    tokenBudgetFraction: 0.25,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+
+  await context.bootstrap({ sessionId: "s-fallback" });
+  await context.ingest({
+    sessionId: "s-fallback",
+    message: { role: "user", content: "remember fallback namespace" },
+  });
+
+  assert.ok(rpc.inserted.some((item) => item.collection === "turns:session:s-fallback"));
+  assert.ok(rpc.inserted.some((item) => item.collection === "user:session:s-fallback"));
+});
+
+test("afterTurn ingests the current user prompt even when OpenClaw persists it before post-turn ingest", async () => {
+  const rpc = new FakeRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    useSessionRecallProjection: true,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+  const sessionKey = "agent:main:main";
+  const durableNamespace = resolveDurableNamespace({ sessionKey });
+
+  await context.bootstrap({ sessionId: "s1", sessionKey });
+  await context.afterTurn({
+    sessionId: "s1",
+    sessionKey,
+    prePromptMessageCount: 2,
+    messages: [
+      { role: "assistant", content: "older context" },
+      { role: "user", content: "remember this through afterTurn" },
+      { role: "assistant", content: "stored" },
+    ],
+  });
+
+  const sessionTexts = rpc.inserted
+    .filter((item) => item.collection === "session:s1")
+    .map((item) => item.text);
+  assert.deepEqual(sessionTexts, ["remember this through afterTurn", "stored"]);
+  assert.ok(rpc.inserted.some((item) => item.collection === `turns:${durableNamespace}` && item.text === "remember this through afterTurn"));
+  assert.ok(rpc.inserted.some((item) => item.collection === `user:${durableNamespace}` && item.text === "remember this through afterTurn"));
+  assert.ok(!rpc.inserted.some((item) => item.collection === `turns:${durableNamespace}` && item.text === "stored"));
+});
+
+test("afterTurn keeps using the explicit user-scoped namespace when userId is available", async () => {
+  const rpc = new FakeRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+
+  await context.bootstrap({ sessionId: "s1", userId: "u-explicit" });
+  await context.afterTurn({
+    sessionId: "s1",
+    userId: "u-explicit",
+    prePromptMessageCount: 1,
+    messages: [
+      { role: "user", content: "remember explicit user namespace" },
+    ],
+  });
+
+  assert.ok(rpc.inserted.some((item) => item.collection === "turns:u-explicit" && item.text === "remember explicit user namespace"));
+  assert.ok(rpc.inserted.some((item) => item.collection === "user:u-explicit" && item.text === "remember explicit user namespace"));
+});
+
+test("assemble uses the sessionKey-derived durable namespace without changing retrieval weighting", async () => {
+  const rpc = new ProjectionStoreRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const now = Date.now();
+  const sessionKey = "agent:main:channel:conversation";
+  const durableNamespace = resolveDurableNamespace({ sessionKey });
+
+  rpc.collections.set(`user:${durableNamespace}`, [
+    {
+      id: "user-fresh",
+      score: 0.72,
+      text: "durable namespace memory winner",
+      metadata: {
+        userId: durableNamespace,
+        ts: now,
+        collection: `user:${durableNamespace}`,
+        token_estimate: 4,
+      },
+    },
+  ]);
+  rpc.collections.set("global", [
+    {
+      id: "global-stale-summary",
+      score: 0.96,
+      text: "stale global summary loser",
+      metadata: {
+        ts: now - 21 * 24 * 60 * 60 * 1000,
+        collection: "global",
+        type: "summary",
+        decay_rate: 1,
+        token_estimate: 4,
+      },
+    },
+  ]);
+
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    alpha: 0.7,
+    beta: 0.2,
+    gamma: 0.1,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+  await context.bootstrap({ sessionId: "s1", sessionKey });
+
+  const assembled = await context.assemble({
+    sessionId: "s1",
+    sessionKey,
+    messages: [{ role: "user", content: "winner" }],
+    tokenBudget: 200,
+  });
+
+  const rendered = assembled.systemPromptAddition;
+  const userIndex = rendered.indexOf("durable namespace memory winner");
+  const globalIndex = rendered.indexOf("stale global summary loser");
+  assert.ok(userIndex >= 0, "expected derived durable namespace memory in assembled recall");
+  assert.ok(globalIndex >= 0, "expected stale global summary in assembled recall");
+  assert.ok(userIndex < globalIndex, "expected fresher durable namespace memory to outrank stale global summary");
+});
+
+test("assemble preserves original host-visible messages even when retrieval normalizes its query surface", async () => {
+  const rpc = new FakeRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    tokenBudgetFraction: 0.25,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache);
+
+  await context.bootstrap({ sessionId: "s1", userId: "u1" });
+  const assembled = await context.assemble({
+    sessionId: "s1",
+    userId: "u1",
+    messages: [
+      { role: "user", content: "search for the last tool result" },
+      { role: "tool", content: "tool output that should remain visible" },
+    ],
+    tokenBudget: 1000,
+  });
+
+  assert.ok(assembled.messages.some((message) => message.role === "tool" && message.content === "tool output that should remain visible"));
+});
+
+test("ingest reports failure when raw session storage fails", async () => {
+  const rpc = {
+    async call<T>(method: string): Promise<T> {
+      switch (method) {
+        case "ensure_collections":
+          return { ok: true } as T;
+        case "list_collection":
+          return { results: [] } as T;
+        case "insert_session_turn":
+          throw new Error("session insert failed");
+        default:
+          throw new Error(`unexpected rpc method: ${method}`);
+      }
+    },
+  };
+  const recallCache = createRecallCache<SearchResult>();
+  const context = buildContextEngineFactory(async () => rpc as never, { topK: 8 }, recallCache);
+
+  await context.bootstrap({ sessionId: "s1", userId: "u1" });
+  const result = await context.ingest({
+    sessionId: "s1",
+    userId: "u1",
+    message: { role: "user", content: "should fail" },
+  });
+
+  assert.deepEqual(result, { ingested: false });
 });
 
 test("real sidecar mid-sized session search benchmark", async (t) => {

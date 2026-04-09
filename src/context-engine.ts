@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   DEFAULT_CONTINUITY_MIN_TURNS,
   DEFAULT_CONTINUITY_PRIOR_CONTEXT_TOKENS,
@@ -19,6 +20,7 @@ import {
 } from "./temporal.js";
 import type { TemporalRecoveryRankingResult } from "./temporal.js";
 import { countTokens, estimateTokens, fitPromptBudget, fitPromptBudgetFirstFit } from "./tokens.js";
+import { resolveDurableNamespace } from "./durable-namespace.js";
 import type { RpcGetter } from "./plugin-runtime.js";
 import type {
   ContextAssembleArgs,
@@ -27,6 +29,7 @@ import type {
   ContextCompactArgs,
   ContextIngestArgs,
   GatingResult,
+  MemoryMessage,
   PluginConfig,
   RecallCache,
   SearchResult,
@@ -42,6 +45,8 @@ const SESSION_RAW_COLLECTION_PREFIX = "session_raw:";
 const SESSION_SUMMARY_COLLECTION_PREFIX = "session_summary:";
 const SESSION_EDGE_COLLECTION_PREFIX = "session_edge:";
 const SESSION_STATE_COLLECTION_PREFIX = "session_state:";
+const AFTER_TURN_DEDUPE_TTL_MS = 60 * 60 * 1000;
+const AFTER_TURN_DEDUPE_MAX_ENTRIES = 1024;
 
 export function buildContextEngineFactory(
   getRpc: RpcGetter,
@@ -52,8 +57,9 @@ export function buildContextEngineFactory(
   let authoredSoftCache: SearchResult[] | null = null;
   let authoredVariantCache: SearchResult[] | null = null;
   const authoredVariantRecallCache = new Map<string, SearchResult[]>();
+  const afterTurnIngestedKeys = new Map<string, number>();
 
-  // Session-scoped elevated-guidance cache keyed by sessionId + generation + userId + queryText
+  // Session-scoped elevated-guidance cache keyed by sessionId + generation + durable namespace + queryText
   const elevatedRecallCache = new Map<string, SearchResult[]>();
   const elevatedRecallGeneration = new Map<string, number>();
 
@@ -65,7 +71,8 @@ export function buildContextEngineFactory(
   return {
     info: { id: "libravdb-memory", name: "LibraVDB Memory", ownsCompaction: true },
     ownsCompaction: true,
-    async bootstrap({ sessionId, userId }: ContextBootstrapArgs) {
+    async bootstrap({ sessionId, sessionKey, userId }: ContextBootstrapArgs) {
+      const durableNamespace = resolveDurableNamespace({ userId, sessionKey, fallback: `session:${sessionId}` });
       const rpc = await getRpc();
       await rpc.call("ensure_collections", {
         collections: [
@@ -75,8 +82,8 @@ export function buildContextEngineFactory(
           sessionEdgeCollection(sessionId),
           sessionStateCollection(sessionId),
           ...(useSessionRecallProjection(cfg) ? [sessionRecallCollection(sessionId)] : []),
-          `turns:${userId}`,
-          `user:${userId}`,
+          `turns:${durableNamespace}`,
+          `user:${durableNamespace}`,
           "global",
           AUTHORED_HARD_COLLECTION,
           AUTHORED_SOFT_COLLECTION,
@@ -98,110 +105,93 @@ export function buildContextEngineFactory(
       validateSection7StartupHardReserve(cfg, authoredHard);
       return { ok: true };
     },
-    async ingest({ sessionId, userId, message, isHeartbeat }: ContextIngestArgs) {
+    async ingest({ sessionId, sessionKey, userId, message, isHeartbeat }: ContextIngestArgs) {
       if (isHeartbeat) {
         return { ingested: false };
       }
 
-      const rpc = await getRpc();
-      const ts = Date.now();
-      const sessionMeta = {
-        role: message.role,
-        ts,
+      const result = await ingestCanonicalMessage({
+        getRpc,
+        cfg,
+        recallCache,
+        clearElevatedCacheForSession,
+        sessionId,
+        sessionKey,
         userId,
-        sessionId,
-        type: "turn",
-        provenance_class: "session_turn",
-        stability_weight: stabilityWeightForMessage(message.role),
-      };
-      // Elevated cache is session-scoped, so invalidate immediately on every ingest
-      clearElevatedCacheForSession(sessionId);
-      const rawSessionId = `${sessionId}:${ts}`;
-      const rawSessionInsert = rpc.call("insert_session_turn", {
-        sessionId,
-        id: rawSessionId,
-        text: message.content,
-        metadata: sessionMeta,
+        message,
       });
-      if (useSessionRecallProjection(cfg)) {
-        try {
-          await rawSessionInsert;
-          await rebuildSessionRecallProjection(rpc, cfg, sessionId);
-        } catch (error) {
-          console.error(error);
-        }
-      } else {
-        void rawSessionInsert.catch(console.error);
-      }
-
-      if (message.role === "user") {
-        try {
-          recallCache.clearUser(userId);
-          await rpc.call("insert_text", {
-            collection: `turns:${userId}`,
-            id: `${userId}:${ts}`,
-            text: message.content,
-            metadata: {
-              ...sessionMeta,
-              provenance_class: "turn_index",
-            },
-          });
-
-          const gating = await rpc.call<GatingResult>("gating_scalar", {
-            userId,
-            text: message.content,
-          });
-
-          if (gating.g >= (cfg.ingestionGateThreshold ?? 0.35)) {
-            void rpc.call("insert_text", {
-              collection: `user:${userId}`,
-              id: `${userId}:${ts}`,
-              text: message.content,
-              metadata: {
-                role: message.role,
-                ts,
-                sessionId,
-                type: "turn",
-                userId,
-                provenance_class: "durable_user_memory",
-                stability_weight: Math.max(stabilityWeightForMessage(message.role), gating.g),
-                gating_score: gating.g,
-                gating_t: gating.t,
-                gating_h: gating.h,
-                gating_r: gating.r,
-                gating_d: gating.d,
-                gating_p: gating.p,
-                gating_a: gating.a,
-                gating_dtech: gating.dtech,
-                gating_gconv: gating.gconv,
-                gating_gtech: gating.gtech,
-              },
-            }).catch(console.error);
-          }
-        } catch {
-          // Session storage already happened; skip durable promotion on gating failure.
-        }
-      }
-
-      return { ingested: true };
+      return { ingested: result.ingested };
     },
-    async assemble({ sessionId, userId, messages, tokenBudget }: ContextAssembleArgs) {
+    async afterTurn({ sessionId, sessionKey, userId, messages, prePromptMessageCount, isHeartbeat }: {
+      sessionId: string;
+      sessionKey?: string;
+      userId?: string;
+      messages: Array<{ role: string; content: unknown }>;
+      prePromptMessageCount: number;
+      isHeartbeat?: boolean;
+    }) {
+      if (isHeartbeat) {
+        return;
+      }
+
+      const startIndex = Math.max(0, prePromptMessageCount - 1);
+      const turnMessages = messages.slice(startIndex);
+      const normalizedTurnMessages = turnMessages.flatMap((turnMessage, offset) => {
+        const normalized = normalizeHostMessage(turnMessage);
+        if (!normalized) {
+          return [];
+        }
+        return [{ index: startIndex + offset, normalized }] as const;
+      });
+      for (let offset = 0; offset < normalizedTurnMessages.length; offset++) {
+        const { index, normalized } = normalizedTurnMessages[offset];
+
+        const dedupeKey = `${sessionId}\n${index}\n${normalized.role}\n${hashMessageContent(normalized.content)}`;
+        if (hasRecentAfterTurnIngest(afterTurnIngestedKeys, dedupeKey)) {
+          continue;
+        }
+
+        const result = await ingestCanonicalMessage({
+          getRpc,
+          cfg,
+          recallCache,
+          clearElevatedCacheForSession,
+          sessionId,
+          sessionKey,
+          userId,
+          message: {
+            ...normalized,
+            id: `after-turn:${index}`,
+          },
+          skipProjectionRebuild: offset !== normalizedTurnMessages.length - 1,
+        });
+        if (result.ingested) {
+          rememberAfterTurnIngest(afterTurnIngestedKeys, dedupeKey);
+        }
+      }
+    },
+    async assemble({ sessionId, sessionKey, userId, messages, tokenBudget, ...rest }: ContextAssembleArgs & Record<string, unknown>) {
       const PROFILE = process.env.OPENCLAW_PROFILE_ASSEMBLE === "1";
       const DEBUG_RECOVERY = process.env.LONGMEMEVAL_DEBUG_RANKING === "1";
+      const durableNamespace = resolveDurableNamespace({ userId, sessionKey, fallback: `session:${sessionId}` });
+      const originalMessages = messages;
+      const normalizedMessages = normalizeConversationMessages(messages as Array<{ role: string; content: unknown }>);
 
-      const queryText = messages.at(-1)?.content ?? "";
+      const queryText =
+        (typeof rest.prompt === "string" && rest.prompt.trim() ? rest.prompt : undefined) ??
+        normalizedMessages.at(-1)?.content ?? "";
       if (!queryText) {
         return {
-          messages,
-          estimatedTokens: countTokens(messages),
+          messages: originalMessages,
+          estimatedTokens: countTokens(originalMessages),
           systemPromptAddition: "",
         } satisfies ContextAssembleResult;
       }
       const temporalQuery = detectTemporalQuerySignal(queryText);
       const temporalSelectorGuard = decideTemporalSelectorGuard(queryText, temporalQuery);
 
-      const excluded = recentIds(messages, 4);
-      const cached = recallCache.take({ userId, queryText });
+      const excluded = recentIds(normalizedMessages, 4);
+      const cached = recallCache.take({ userId: durableNamespace, queryText });
 
       const rpc = await getRpc();
 
@@ -265,8 +255,9 @@ export function buildContextEngineFactory(
           temporalQuery,
           temporalSelectorGuard,
           sessionId,
-          userId,
-          messages,
+          userId: durableNamespace,
+          visibleMessages: originalMessages,
+          messages: normalizedMessages,
           tokenBudget,
           profiler,
           debugRecovery: DEBUG_RECOVERY,
@@ -282,8 +273,8 @@ export function buildContextEngineFactory(
           : result;
       } catch {
         return {
-          messages,
-          estimatedTokens: countTokens(messages),
+          messages: originalMessages,
+          estimatedTokens: countTokens(originalMessages),
           systemPromptAddition: "",
         } satisfies ContextAssembleResult;
       }
@@ -302,6 +293,7 @@ export function buildContextEngineFactory(
       temporalSelectorGuard,
       sessionId,
       userId,
+      visibleMessages,
       messages,
       tokenBudget,
       profiler,
@@ -320,6 +312,7 @@ export function buildContextEngineFactory(
       temporalSelectorGuard: ReturnType<typeof decideTemporalSelectorGuard>;
       sessionId: string;
       userId: string;
+      visibleMessages: MemoryMessage[];
       messages: Array<{ role: string; content: string }>;
       tokenBudget: number;
       profiler: { mark(label: string): void; emit(): void } | null;
@@ -369,8 +362,8 @@ export function buildContextEngineFactory(
           content: buildInjectedMemoryMessageContent(item),
         }));
         return {
-          messages: [...selectedMessages, ...messages],
-          estimatedTokens: countTokens(selectedMessages) + countTokens(messages),
+          messages: [...selectedMessages, ...visibleMessages],
+          estimatedTokens: countTokens(selectedMessages) + countTokens(visibleMessages),
           systemPromptAddition: buildDegradedMemoryHeader(degradedReasons, selected),
         };
       }
@@ -706,8 +699,8 @@ export function buildContextEngineFactory(
       }));
 
       return {
-        messages: [...selectedMessages, ...messages],
-        estimatedTokens: countTokens(selectedMessages) + countTokens(messages),
+        messages: [...selectedMessages, ...visibleMessages],
+        estimatedTokens: countTokens(selectedMessages) + countTokens(visibleMessages),
         systemPromptAddition: buildMemoryHeader(selected),
         _debug: debugRecovery
           ? {
@@ -979,6 +972,207 @@ function clampFraction(value: number | undefined): number {
     return 0;
   }
   return Math.min(1, Math.max(0, value));
+}
+
+async function ingestCanonicalMessage(params: {
+  getRpc: RpcGetter;
+  cfg: PluginConfig;
+  recallCache: RecallCache<SearchResult>;
+  clearElevatedCacheForSession: (sessionId: string) => void;
+  sessionId: string;
+  sessionKey?: string;
+  userId?: string;
+  message: MemoryMessage;
+  skipProjectionRebuild?: boolean;
+}): Promise<{ ingested: boolean }> {
+  const normalized = normalizeMemoryMessage(params.message);
+  if (!normalized) {
+    return { ingested: false };
+  }
+
+  const rpc = await params.getRpc();
+  const ts = Date.now();
+  const durableNamespace = resolveDurableNamespace({
+    userId: params.userId,
+    sessionKey: params.sessionKey,
+    fallback: `session:${params.sessionId}`,
+  });
+  const turnId = normalized.id ?? `${ts}`;
+  const sessionMeta = {
+    role: normalized.role,
+    ts,
+    userId: durableNamespace,
+    sessionId: params.sessionId,
+    type: "turn",
+    provenance_class: "session_turn",
+    stability_weight: stabilityWeightForMessage(normalized.role),
+    source_turn_id: turnId,
+  };
+
+  params.clearElevatedCacheForSession(params.sessionId);
+  const rawSessionInsert = rpc.call("insert_session_turn", {
+    sessionId: params.sessionId,
+    id: `${params.sessionId}:${turnId}`,
+    text: normalized.content,
+    metadata: sessionMeta,
+  });
+  try {
+    await rawSessionInsert;
+    if (useSessionRecallProjection(params.cfg) && !params.skipProjectionRebuild) {
+      await rebuildSessionRecallProjection(rpc, params.cfg, params.sessionId);
+    }
+  } catch {
+    return { ingested: false };
+  }
+
+  if (normalized.role !== "user") {
+    return { ingested: true };
+  }
+
+  try {
+    params.recallCache.clearUser(durableNamespace);
+    await rpc.call("insert_text", {
+      collection: `turns:${durableNamespace}`,
+      id: `${durableNamespace}:${turnId}`,
+      text: normalized.content,
+      metadata: {
+        ...sessionMeta,
+        provenance_class: "turn_index",
+      },
+    });
+
+    const gating = await rpc.call<GatingResult>("gating_scalar", {
+      userId: durableNamespace,
+      text: normalized.content,
+    });
+
+    if (gating.g >= (params.cfg.ingestionGateThreshold ?? 0.35)) {
+      void rpc.call("insert_text", {
+        collection: `user:${durableNamespace}`,
+        id: `${durableNamespace}:${turnId}`,
+        text: normalized.content,
+        metadata: {
+          role: normalized.role,
+          ts,
+          sessionId: params.sessionId,
+          type: "turn",
+          userId: durableNamespace,
+          source_turn_id: turnId,
+          provenance_class: "durable_user_memory",
+          stability_weight: Math.max(stabilityWeightForMessage(normalized.role), gating.g),
+          gating_score: gating.g,
+          gating_t: gating.t,
+          gating_h: gating.h,
+          gating_r: gating.r,
+          gating_d: gating.d,
+          gating_p: gating.p,
+          gating_a: gating.a,
+          gating_dtech: gating.dtech,
+          gating_gconv: gating.gconv,
+          gating_gtech: gating.gtech,
+        },
+      }).catch(console.error);
+    }
+  } catch {
+    // Session storage already happened; skip durable promotion on gating failure.
+  }
+
+  return { ingested: true };
+}
+
+function hashMessageContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function pruneAfterTurnIngestKeys(cache: Map<string, number>, now: number): void {
+  for (const [key, seenAt] of cache) {
+    if (now - seenAt > AFTER_TURN_DEDUPE_TTL_MS) {
+      cache.delete(key);
+    }
+  }
+  while (cache.size > AFTER_TURN_DEDUPE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
+}
+
+function hasRecentAfterTurnIngest(cache: Map<string, number>, key: string): boolean {
+  const now = Date.now();
+  pruneAfterTurnIngestKeys(cache, now);
+  return cache.has(key);
+}
+
+function rememberAfterTurnIngest(cache: Map<string, number>, key: string): void {
+  const now = Date.now();
+  cache.delete(key);
+  cache.set(key, now);
+  pruneAfterTurnIngestKeys(cache, now);
+}
+
+function normalizeHostMessage(message: { role: string; content: unknown } | undefined): MemoryMessage | null {
+  if (!message || !shouldIngestRole(message.role)) {
+    return null;
+  }
+  const content = extractMessageText(message.content);
+  if (!content) {
+    return null;
+  }
+  return {
+    role: message.role,
+    content,
+  };
+}
+
+function normalizeConversationMessages(messages: Array<{ role: string; content: unknown }>): MemoryMessage[] {
+  return messages
+    .map((message) => normalizeHostMessage(message))
+    .filter((message): message is MemoryMessage => message !== null);
+}
+
+function normalizeMemoryMessage(message: MemoryMessage): MemoryMessage | null {
+  if (!shouldIngestRole(message.role)) {
+    return null;
+  }
+  const content = extractMessageText(message.content);
+  if (!content) {
+    return null;
+  }
+  return {
+    ...message,
+    content,
+  };
+}
+
+function shouldIngestRole(role: string): boolean {
+  return role === "user" || role === "assistant" || role === "system";
+}
+
+function extractMessageText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .flatMap((part) => {
+      if (!part || typeof part !== "object") {
+        return [];
+      }
+      const type = (part as { type?: unknown }).type;
+      if (
+        (type === "text" || type === "input_text" || type === "output_text") &&
+        typeof (part as { text?: unknown }).text === "string"
+      ) {
+        return [(part as { text: string }).text];
+      }
+      return [];
+    })
+    .join("\n")
+    .trim();
 }
 
 function validateSection7StartupHardReserve(cfg: PluginConfig, authoredHard: SearchResult[]): void {

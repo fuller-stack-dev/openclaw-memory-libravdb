@@ -72,6 +72,18 @@ test("memory runtime bridge searches the resolved durable namespace under the la
   assert.equal(result[0]?.source, "memory");
 });
 
+test("memory runtime bridge falls back to session-scoped namespace when no other identity is present", async () => {
+  const rpc = new FakeRpc();
+  const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {});
+  const { manager } = await runtime.getMemorySearchManager();
+
+  const result = await manager.search({ query: "find prior context", sessionId: "s-fallback" });
+
+  assert.ok(Array.isArray(result));
+  assert.equal(rpc.calls[1]?.method, "search_text_collections");
+  assert.deepEqual(rpc.calls[1]?.params.collections, ["session:s-fallback", "user:session:s-fallback", "global"]);
+});
+
 test("memory runtime bridge keeps the legacy string search shape", async () => {
   const rpc = new FakeRpc();
   const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {});

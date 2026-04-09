@@ -78,12 +78,13 @@ function createMemorySearchManager(
         return legacyCall ? { results: [], error: "Missing query text for LibraVDB memory search" } : [];
       }
 
+      const sessionId = firstString(params.sessionId, params.context?.sessionId);
       const userId = resolveDurableNamespace({
         userId: firstString(params.userId, params.context?.userId),
         sessionKey: firstString(params.sessionKey, params.context?.sessionKey),
         agentId: firstString(params.agentId, params.context?.agentId, defaults.agentId),
+        fallback: sessionId ? `session:${sessionId}` : undefined,
       });
-      const sessionId = firstString(params.sessionId, params.context?.sessionId);
       const k = normalizePositiveInteger(params.k, params.limit, params.topK, cfg.topK, 8);
       const collections = resolveSearchCollections(cfg, userId, sessionId);
       const rpc = await getRpc();

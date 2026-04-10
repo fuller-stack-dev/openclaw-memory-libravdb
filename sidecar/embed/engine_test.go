@@ -328,7 +328,7 @@ func TestBundledFallsBackToConfiguredFallbackProfile(t *testing.T) {
 	resolveCalls := make([]string, 0, 2)
 	resolveBundledSpec = func(cfg Config) (onnxLocalSpec, error) {
 		resolveCalls = append(resolveCalls, cfg.Profile)
-		if cfg.Profile == DefaultEmbeddingProfile {
+		if cfg.Profile == "nomic-embed-text-v1.5" {
 			return onnxLocalSpec{}, errors.New("primary profile unavailable")
 		}
 		return onnxLocalSpec{
@@ -349,7 +349,7 @@ func TestBundledFallsBackToConfiguredFallbackProfile(t *testing.T) {
 
 	engine := NewWithConfig(Config{
 		Backend:         "bundled",
-		Profile:         DefaultEmbeddingProfile,
+		Profile:         "nomic-embed-text-v1.5",
 		FallbackProfile: FallbackEmbeddingProfile,
 		RuntimePath:     "/opt/onnx/libonnxruntime.so",
 	})
@@ -359,7 +359,7 @@ func TestBundledFallsBackToConfiguredFallbackProfile(t *testing.T) {
 	if engine.Profile().Family != FallbackEmbeddingProfile {
 		t.Fatalf("expected fallback family %q, got %q", FallbackEmbeddingProfile, engine.Profile().Family)
 	}
-	if len(resolveCalls) != 2 || resolveCalls[0] != DefaultEmbeddingProfile || resolveCalls[1] != FallbackEmbeddingProfile {
+	if len(resolveCalls) != 2 || resolveCalls[0] != "nomic-embed-text-v1.5" || resolveCalls[1] != FallbackEmbeddingProfile {
 		t.Fatalf("unexpected resolve order %v", resolveCalls)
 	}
 }

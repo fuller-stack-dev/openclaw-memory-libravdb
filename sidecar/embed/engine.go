@@ -16,7 +16,7 @@ import (
 
 const (
 	DefaultBackend    = "bundled"
-	DefaultDimensions = 768
+	DefaultDimensions = 384
 	longDocWindowSize = 512
 	longDocStride     = 256
 )

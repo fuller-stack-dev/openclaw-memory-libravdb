@@ -3,7 +3,7 @@ package embed
 import "strings"
 
 const (
-	DefaultEmbeddingProfile  = "nomic-embed-text-v1.5"
+	DefaultEmbeddingProfile  = "all-minilm-l6-v2"
 	FallbackEmbeddingProfile = "all-minilm-l6-v2"
 )
 

@@ -20,8 +20,8 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.EmbeddingBackend != "bundled" {
 		t.Fatalf("expected bundled backend, got %q", cfg.EmbeddingBackend)
 	}
-	if cfg.EmbeddingProfile != "nomic-embed-text-v1.5" {
-		t.Fatalf("expected Nomic default profile, got %q", cfg.EmbeddingProfile)
+	if cfg.EmbeddingProfile != "all-minilm-l6-v2" {
+		t.Fatalf("expected MiniLM default profile, got %q", cfg.EmbeddingProfile)
 	}
 	if cfg.FallbackProfile != "all-minilm-l6-v2" {
 		t.Fatalf("expected MiniLM fallback profile, got %q", cfg.FallbackProfile)

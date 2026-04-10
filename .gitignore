@@ -6,6 +6,7 @@
 .daemon-bin/
 .ts-build/
 .ts-toolchain/
+/sidecar/sidecar
 
 AGENTS.md
 CLAUDE.md

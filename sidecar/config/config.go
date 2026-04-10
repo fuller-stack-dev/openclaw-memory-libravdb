@@ -44,7 +44,7 @@ func FromEnv() Config {
 		RPCEndpoint:                envOrDefault("LIBRAVDB_RPC_ENDPOINT", defaultRPCEndpoint()),
 		ONNXRuntimePath:            os.Getenv("LIBRAVDB_ONNX_RUNTIME"),
 		EmbeddingBackend:           envOrDefault("LIBRAVDB_EMBEDDING_BACKEND", "bundled"),
-		EmbeddingProfile:           envOrDefault("LIBRAVDB_EMBEDDING_PROFILE", "nomic-embed-text-v1.5"),
+		EmbeddingProfile:           envOrDefault("LIBRAVDB_EMBEDDING_PROFILE", "all-minilm-l6-v2"),
 		FallbackProfile:            envOrDefault("LIBRAVDB_FALLBACK_PROFILE", "all-minilm-l6-v2"),
 		EmbeddingModelPath:         os.Getenv("LIBRAVDB_EMBEDDING_MODEL"),
 		EmbeddingTokenizerPath:     os.Getenv("LIBRAVDB_EMBEDDING_TOKENIZER"),

@@ -4,15 +4,14 @@ The plugin now supports a lightweight `embeddingProfile` setting for named local
 
 Default selection baseline as of `2026-03-28`:
 
-- default embedding profile: `nomic-embed-text-v1.5`
+- default embedding profile: `all-minilm-l6-v2`
 - bundled fallback profile: `all-minilm-l6-v2`
 
 Why:
 
-- MiniLM and Nomic are equivalent on the current lexical and paraphrase baseline.
-- Nomic materially outperforms MiniLM on cross-domain ranking quality.
-- Nomic is the only profile that clears the long-context baseline once sliding-window document embedding is applied.
-- Adversarial lexical traps remain reranker-window cases, but Nomic still narrows the relevant-vs-distractor margin materially.
+- MiniLM keeps the local LongMemEval retrieval slice inside the target memory envelope on macOS.
+- Nomic remains available as an explicit opt-in profile for long-context experiments.
+- Nomic ONNX on macOS is fragile with CoreML execution and can trigger multi-GB RSS, so it is no longer the safe bundled default.
 
 Current shipped profile names:
 
@@ -37,6 +36,6 @@ How it works:
 
 Recommended usage:
 
-- `bundled` for the shipped default path, which now prefers Nomic and falls back to MiniLM if the primary profile is unavailable.
+- `bundled` for the shipped default path, which now prefers MiniLM for local stability.
 - `onnx-local` plus `embeddingProfile` when a power user wants a known model family like Nomic with local assets.
 - treat remote/Ollama providers as future separate backend types, not as overloads of `custom-local`.

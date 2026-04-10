@@ -264,7 +264,7 @@ Expected output shape:
 │ Memories stored    │ 0                            │
 │ Gate threshold     │ 0.35                         │
 │ Abstractive model  │ ready | not provisioned      │
-│ Embedding profile  │ nomic-embed-text-v1.5        │
+│ Embedding profile  │ all-minilm-l6-v2             │
 │ Message            │ ok                           │
 └────────────────────┴──────────────────────────────┘
 ```

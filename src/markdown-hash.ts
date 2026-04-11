@@ -17,12 +17,19 @@ const textEncoder = new TextEncoder();
 const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
 const FNV_PRIME = 0x100000001b3n;
 
+interface HashBackend {
+  kind: string;
+  hash(bytes: Uint8Array): string;
+}
+
 interface WasmExports {
   memory: WebAssembly.Memory;
   hash_fnv1a64(ptr: number, len: number): bigint;
 }
 
-class Fnv64Fallback {
+class Fnv64Fallback implements HashBackend {
+  kind = "js-fnv1a64";
+
   hash(bytes: Uint8Array): string {
     let hash = FNV_OFFSET_BASIS;
     for (let i = 0; i < bytes.length; i++) {
@@ -33,7 +40,8 @@ class Fnv64Fallback {
   }
 }
 
-class WasmFnv64 {
+class WasmFnv64 implements HashBackend {
+  kind = "wasm-fnv1a64";
   private readonly memory: WebAssembly.Memory;
   private readonly hashFn: (ptr: number, len: number) => bigint;
   private view: Uint8Array;
@@ -70,9 +78,9 @@ class WasmFnv64 {
   }
 }
 
-let backend: WasmFnv64 | Fnv64Fallback | null = null;
+let backend: HashBackend | null = null;
 
-function getBackend(): WasmFnv64 | Fnv64Fallback {
+function getBackend(): HashBackend {
   if (!backend) {
     try {
       backend = new WasmFnv64();
@@ -89,4 +97,8 @@ export function hashBytes(bytes: Uint8Array): string {
 
 export function hashText(text: string): string {
   return hashBytes(textEncoder.encode(text));
+}
+
+export function getHashBackendName(): string {
+  return getBackend().kind;
 }

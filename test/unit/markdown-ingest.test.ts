@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { hashBytes } from "../../src/markdown-hash.js";
+import { getHashBackendName, hashBytes } from "../../src/markdown-hash.js";
 
 test("markdown hash sentinel is stable and changes with content", () => {
   const left = hashBytes(new Uint8Array([1, 2, 3, 4]));
@@ -10,4 +10,9 @@ test("markdown hash sentinel is stable and changes with content", () => {
 
   assert.equal(left, right);
   assert.notEqual(left, different);
+  assert.equal(left, "8010d29826a519fb");
+});
+
+test("markdown hash sentinel uses the wasm backend when available", () => {
+  assert.equal(getHashBackendName(), "wasm-fnv1a64");
 });

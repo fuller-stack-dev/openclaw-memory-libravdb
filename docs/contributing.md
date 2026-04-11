@@ -73,8 +73,7 @@ Before opening a PR:
 - `pnpm check` must pass
 - `go test -race ./...` from `sidecar/` must pass
 - any new gating signal must come with calibration or invariant coverage
-- any retrieval math change must be reflected in [mathematics-v2.md](./mathematics-v2.md)
-- any gating change must be reflected in [gating.md](./gating.md)
+- any retrieval math or gating change must be reflected in the private design notes
 
 ## Release Versioning
 

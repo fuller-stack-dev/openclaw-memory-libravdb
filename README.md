@@ -155,8 +155,7 @@ The main runtime split is:
   - compaction and summarization
   - stable local IPC endpoint
 
-For the implemented architecture map, read
-[docs/architecture.md](./docs/architecture.md).
+For the implemented architecture map, read [docs/architecture.md](./docs/architecture.md).
 
 ## Retrieval Model
 
@@ -178,12 +177,8 @@ The ranking model currently blends:
 - recency decay
 - summary quality attenuation
 
-The formal math lives in:
-
-- [docs/mathematics-v2.md](./docs/mathematics-v2.md)
-- [docs/continuity.md](./docs/continuity.md)
-- [docs/ast-v2.md](./docs/ast-v2.md)
-- [docs/elevated-guidance.md](./docs/elevated-guidance.md)
+The formal math and deeper design notes are kept out of the public index on
+purpose.
 
 ## LongMemEval Harness
 
@@ -273,6 +268,7 @@ Good entry points:
 - [docs/install.md](./docs/install.md)
 - [docs/installation.md](./docs/installation.md)
 - [docs/uninstall.md](./docs/uninstall.md)
+- [docs/architecture.md](./docs/architecture.md)
 - [docs/implementation.md](./docs/implementation.md)
 
 ## For Researchers And Builders
@@ -293,9 +289,7 @@ Start here:
 
 - [docs/problem.md](./docs/problem.md)
 - [docs/architecture.md](./docs/architecture.md)
-- [docs/mathematics-v2.md](./docs/mathematics-v2.md)
-- [docs/gating.md](./docs/gating.md)
-- [docs/continuity.md](./docs/continuity.md)
+- [docs/implementation.md](./docs/implementation.md)
 
 ## Runtime Facts
 
@@ -318,8 +312,6 @@ Start here:
   architecture
 - [docs/implementation.md](./docs/implementation.md): important implementation
   contracts
-- [docs/mathematics-v2.md](./docs/mathematics-v2.md): formal scoring and
-  optimization reference
 
 ## Current Constraint
 

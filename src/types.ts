@@ -24,6 +24,17 @@ export interface PluginConfig {
   beta?: number;
   gamma?: number;
   ingestionGateThreshold?: number;
+  markdownIngestionEnabled?: boolean;
+  markdownIngestionRoots?: string[];
+  markdownIngestionObsidianEnabled?: boolean;
+  markdownIngestionObsidianRoots?: string[];
+  markdownIngestionObsidianInclude?: string[];
+  markdownIngestionObsidianExclude?: string[];
+  markdownIngestionObsidianDebounceMs?: number;
+  markdownIngestionInclude?: string[];
+  markdownIngestionExclude?: string[];
+  markdownIngestionCollection?: string;
+  markdownIngestionDebounceMs?: number;
   gatingWeights?: {
     w1c?: number;
     w2c?: number;

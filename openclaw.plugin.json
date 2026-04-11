@@ -41,6 +41,50 @@
         "type": "number",
         "default": 0.35
       },
+      "markdownIngestionEnabled": {
+        "type": "boolean",
+        "default": false
+      },
+      "markdownIngestionRoots": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "markdownIngestionObsidianEnabled": {
+        "type": "boolean",
+        "default": false
+      },
+      "markdownIngestionObsidianRoots": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "markdownIngestionObsidianInclude": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "markdownIngestionObsidianExclude": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "markdownIngestionObsidianDebounceMs": {
+        "type": "number",
+        "default": 150
+      },
+      "markdownIngestionInclude": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "markdownIngestionExclude": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "markdownIngestionCollection": {
+        "type": "string",
+        "default": "global"
+      },
+      "markdownIngestionDebounceMs": {
+        "type": "number",
+        "default": 150
+      },
       "gatingWeights": {
         "type": "object",
         "additionalProperties": false,

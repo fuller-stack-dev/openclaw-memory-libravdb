@@ -102,6 +102,20 @@ func TestInsertSearchAndDelete(t *testing.T) {
 	}
 }
 
+func TestParseSourceAdapterKind(t *testing.T) {
+	t.Parallel()
+
+	if got := ParseSourceAdapterKind("generic"); got != SourceAdapterKindGeneric {
+		t.Fatalf("ParseSourceAdapterKind(generic) = %q, want generic", got)
+	}
+	if got := ParseSourceAdapterKind("Obsidian"); got != SourceAdapterKindObsidian {
+		t.Fatalf("ParseSourceAdapterKind(Obsidian) = %q, want obsidian", got)
+	}
+	if got := ParseSourceAdapterKind("unknown"); got != SourceAdapterKindUnknown {
+		t.Fatalf("ParseSourceAdapterKind(unknown) = %q, want unknown", got)
+	}
+}
+
 func TestListByMetaAndExclude(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "store.libravdb"), fakeEmbedder{})
@@ -399,7 +413,7 @@ Plain lore here.
 		t.Fatalf("ExtractDocument() error = %v", err)
 	}
 
-	if err := s.PersistAuthoredDocument(ctx, doc, true); err != nil {
+	if err := s.PersistAuthoredDocument(ctx, doc, true, MarkdownSourceMetadata{}); err != nil {
 		t.Fatalf("PersistAuthoredDocument() error = %v", err)
 	}
 
@@ -445,6 +459,87 @@ Plain lore here.
 	}
 }
 
+func TestPersistAuthoredMarkdownDocumentRoundTripsAndDeletes(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "store.libravdb"), fakeEmbedder{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	raw := []byte(`---
+hop_targets: [souls.md#000007]
+---
+
+You must keep the prompt lean.
+
+Plain lore here.
+`)
+	if err := s.PersistAuthoredMarkdownDocument(ctx, "skills/alpha/guide.md", raw, "tok-v1", true, MarkdownSourceMetadata{
+		SourceRoot:    "/tmp/root",
+		SourcePath:    "skills/alpha/guide.md",
+		SourceKind:    "generic",
+		FileHash:      "deadbeef",
+		SourceSize:    int64(len(raw)),
+		SourceMtimeMs: 1234,
+		IngestVersion: 3,
+		HashBackend:   "wasm-fnv1a64",
+	}); err != nil {
+		t.Fatalf("PersistAuthoredMarkdownDocument() error = %v", err)
+	}
+
+	hard, err := s.ListByMeta(ctx, AuthoredHardCollection, "source_doc", "skills/alpha/guide.md")
+	if err != nil {
+		t.Fatalf("ListByMeta(hard) error = %v", err)
+	}
+	variant, err := s.ListByMeta(ctx, AuthoredVariantCollection, "source_doc", "skills/alpha/guide.md")
+	if err != nil {
+		t.Fatalf("ListByMeta(variant) error = %v", err)
+	}
+	if len(hard) == 0 || len(variant) == 0 {
+		t.Fatalf("expected authored markdown records, got hard=%d variant=%d", len(hard), len(variant))
+	}
+	if got := metaString(variant[0].Metadata, "source_root"); got != "/tmp/root" {
+		t.Fatalf("variant source_root = %q, want /tmp/root", got)
+	}
+	if got := metaString(variant[0].Metadata, "source_path"); got != "skills/alpha/guide.md" {
+		t.Fatalf("variant source_path = %q, want skills/alpha/guide.md", got)
+	}
+	if got := metaString(variant[0].Metadata, "source_kind"); got != "generic" {
+		t.Fatalf("variant source_kind = %q, want generic", got)
+	}
+	if got := metaString(variant[0].Metadata, "file_hash"); got != "deadbeef" {
+		t.Fatalf("variant file_hash = %q, want deadbeef", got)
+	}
+	if got := metaInt(variant[0].Metadata, "source_size"); got != len(raw) {
+		t.Fatalf("variant source_size = %d, want %d", got, len(raw))
+	}
+	if got := metaInt(variant[0].Metadata, "source_mtime_ms"); got != 1234 {
+		t.Fatalf("variant source_mtime_ms = %d, want 1234", got)
+	}
+	if got := metaInt(variant[0].Metadata, "ingest_version"); got != 3 {
+		t.Fatalf("variant ingest_version = %d, want 3", got)
+	}
+	if got := metaString(variant[0].Metadata, "hash_backend"); got != "wasm-fnv1a64" {
+		t.Fatalf("variant hash_backend = %q, want wasm-fnv1a64", got)
+	}
+
+	if err := s.DeleteAuthoredDocument(ctx, "skills/alpha/guide.md"); err != nil {
+		t.Fatalf("DeleteAuthoredDocument() error = %v", err)
+	}
+
+	hard, err = s.ListByMeta(ctx, AuthoredHardCollection, "source_doc", "skills/alpha/guide.md")
+	if err != nil {
+		t.Fatalf("ListByMeta(hard after delete) error = %v", err)
+	}
+	variant, err = s.ListByMeta(ctx, AuthoredVariantCollection, "source_doc", "skills/alpha/guide.md")
+	if err != nil {
+		t.Fatalf("ListByMeta(variant after delete) error = %v", err)
+	}
+	if len(hard) != 0 || len(variant) != 0 {
+		t.Fatalf("expected authored records to be removed, got hard=%d variant=%d", len(hard), len(variant))
+	}
+}
+
 func TestPersistAuthoredDocumentStoresHopTargetsFromASTMetadata(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "test.libravdb"), fakeEmbedder{})
@@ -461,7 +556,7 @@ Regular narrative lore goes here.
 	if err != nil {
 		t.Fatalf("ExtractDocument() error = %v", err)
 	}
-	if err := s.PersistAuthoredDocument(ctx, doc, true); err != nil {
+	if err := s.PersistAuthoredDocument(ctx, doc, true, MarkdownSourceMetadata{}); err != nil {
 		t.Fatalf("PersistAuthoredDocument() error = %v", err)
 	}
 
@@ -508,10 +603,10 @@ Lore beta.
 		t.Fatalf("ExtractDocument(second) error = %v", err)
 	}
 
-	if err := s.PersistAuthoredDocument(ctx, first, true); err != nil {
+	if err := s.PersistAuthoredDocument(ctx, first, true, MarkdownSourceMetadata{}); err != nil {
 		t.Fatalf("PersistAuthoredDocument(first) error = %v", err)
 	}
-	if err := s.PersistAuthoredDocument(ctx, second, true); err != nil {
+	if err := s.PersistAuthoredDocument(ctx, second, true, MarkdownSourceMetadata{}); err != nil {
 		t.Fatalf("PersistAuthoredDocument(second) error = %v", err)
 	}
 

@@ -104,6 +104,44 @@ Expected healthy state:
 - the plugin is active as the memory provider
 - the runtime can report stored counts and model readiness
 
+## Markdown Ingestion
+
+LibraVDB Memory can watch markdown roots and sync changed notes into vector
+memory without changing the Go sidecar RPC contract.
+
+The two built-in source adapters are:
+
+- `generic`: for OpenClaw-owned markdown, including stock files like
+  `MEMORY.md`
+- `obsidian`: for Obsidian vault roots, with tag-aware defaults
+
+Configuration is driven through the plugin config fields in
+`openclaw.plugin.json`:
+
+- `markdownIngestionEnabled`
+- `markdownIngestionRoots`
+- `markdownIngestionInclude`
+- `markdownIngestionExclude`
+- `markdownIngestionDebounceMs`
+- `markdownIngestionObsidianEnabled`
+- `markdownIngestionObsidianRoots`
+- `markdownIngestionObsidianInclude`
+- `markdownIngestionObsidianExclude`
+- `markdownIngestionObsidianDebounceMs`
+
+Typical usage:
+
+- point `markdownIngestionRoots` at OpenClaw-owned markdown roots, such as
+  `.openclaw/skills/*/*.md` or a stock memory directory that contains
+  `MEMORY.md`
+- enable the Obsidian adapter separately with
+  `markdownIngestionObsidianEnabled: true` and one or more vault roots
+- use include/exclude globs to narrow what gets watched when needed
+
+By default, the Obsidian adapter only auto-ingests notes that look like memory
+notes, using frontmatter tags or inline tags like `#project`. The OpenClaw
+stock `MEMORY.md` file is always eligible through the generic adapter path.
+
 ## Install Model
 
 This plugin is intentionally **connect-only** at install time.

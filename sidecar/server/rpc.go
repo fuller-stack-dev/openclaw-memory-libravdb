@@ -38,27 +38,29 @@ func New(embedder embed.Embedder, extractive summarize.Summarizer, abstractive s
 		LifecycleJournalMaxEntries: lifecycleJournalMaxEntries,
 	}
 	s.methods = map[string]HandlerFn{
-		"health":                  s.handleHealth,
-		"status":                  s.handleStatus,
-		"session_lifecycle_hint":  s.handleSessionLifecycleHint,
-		"list_lifecycle_journal":  s.handleListLifecycleJournal,
-		"ensure_collections":      s.handleEnsureCollections,
-		"insert_text":             s.handleInsertText,
-		"insert_session_turn":     s.handleInsertSessionTurn,
-		"gating_scalar":           s.handleGatingScalar,
-		"search_text":             s.handleSearchText,
-		"search_text_collections": s.handleSearchTextCollections,
-		"bump_access_counts":      s.handleBumpAccessCounts,
-		"list_collection":         s.handleListCollection,
-		"list_by_meta":            s.handleListByMeta,
-		"export_memory":           s.handleExportMemory,
-		"flush_namespace":         s.handleFlushNamespace,
-		"delete":                  s.handleDelete,
-		"delete_batch":            s.handleDeleteBatch,
-		"compact_session":         s.handleCompact,
-		"expand_summary":          s.handleExpandSummary,
-		"query_raw_session":       s.handleQueryRawSession,
-		"flush":                   s.handleFlush,
+		"health":                   s.handleHealth,
+		"status":                   s.handleStatus,
+		"session_lifecycle_hint":   s.handleSessionLifecycleHint,
+		"list_lifecycle_journal":   s.handleListLifecycleJournal,
+		"ensure_collections":       s.handleEnsureCollections,
+		"ingest_markdown_document": s.handleIngestMarkdownDocument,
+		"delete_authored_document": s.handleDeleteAuthoredDocument,
+		"insert_text":              s.handleInsertText,
+		"insert_session_turn":      s.handleInsertSessionTurn,
+		"gating_scalar":            s.handleGatingScalar,
+		"search_text":              s.handleSearchText,
+		"search_text_collections":  s.handleSearchTextCollections,
+		"bump_access_counts":       s.handleBumpAccessCounts,
+		"list_collection":          s.handleListCollection,
+		"list_by_meta":             s.handleListByMeta,
+		"export_memory":            s.handleExportMemory,
+		"flush_namespace":          s.handleFlushNamespace,
+		"delete":                   s.handleDelete,
+		"delete_batch":             s.handleDeleteBatch,
+		"compact_session":          s.handleCompact,
+		"expand_summary":           s.handleExpandSummary,
+		"query_raw_session":        s.handleQueryRawSession,
+		"flush":                    s.handleFlush,
 	}
 	return s
 }
@@ -94,6 +96,29 @@ type insertSessionTurnParams struct {
 	ID        string         `json:"id"`
 	Text      string         `json:"text"`
 	Metadata  map[string]any `json:"metadata"`
+}
+
+type ingestMarkdownDocumentParams struct {
+	SourceDoc   string             `json:"sourceDoc"`
+	Text        string             `json:"text"`
+	TokenizerID string             `json:"tokenizerId,omitempty"`
+	CoreDoc     bool               `json:"coreDoc"`
+	SourceMeta  markdownSourceMeta `json:"sourceMeta,omitempty"`
+}
+
+type deleteAuthoredDocumentParams struct {
+	SourceDoc string `json:"sourceDoc"`
+}
+
+type markdownSourceMeta struct {
+	SourceRoot    string `json:"sourceRoot,omitempty"`
+	SourcePath    string `json:"sourcePath,omitempty"`
+	SourceKind    string `json:"sourceKind,omitempty"`
+	FileHash      string `json:"fileHash,omitempty"`
+	SourceSize    int64  `json:"sourceSize,omitempty"`
+	SourceMtimeMs int64  `json:"sourceMtimeMs,omitempty"`
+	IngestVersion int    `json:"ingestVersion,omitempty"`
+	HashBackend   string `json:"hashBackend,omitempty"`
 }
 
 type searchTextParams struct {
@@ -331,6 +356,48 @@ func (s *Server) handleInsertSessionTurn(ctx context.Context, raw any) (any, err
 		return nil, err
 	}
 	if err := s.Store.InsertSessionTurn(ctx, params.SessionID, params.ID, params.Text, params.Metadata); err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true}, nil
+}
+
+func (s *Server) handleIngestMarkdownDocument(ctx context.Context, raw any) (any, error) {
+	var params ingestMarkdownDocumentParams
+	if err := decode(raw, &params); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(params.SourceDoc) == "" {
+		return nil, fmt.Errorf("sourceDoc is required")
+	}
+	tokenizerID := firstNonEmpty(params.TokenizerID, "markdown-ingest:v1")
+	sourceKind := store.ParseSourceAdapterKind(params.SourceMeta.SourceKind)
+	if sourceKind == store.SourceAdapterKindUnknown {
+		sourceKind = store.SourceAdapterKindGeneric
+	}
+	if err := s.Store.PersistAuthoredMarkdownDocument(ctx, params.SourceDoc, []byte(params.Text), tokenizerID, params.CoreDoc, store.MarkdownSourceMetadata{
+		SourceRoot:    params.SourceMeta.SourceRoot,
+		SourcePath:    params.SourceMeta.SourcePath,
+		SourceKind:    sourceKind,
+		FileHash:      params.SourceMeta.FileHash,
+		SourceSize:    params.SourceMeta.SourceSize,
+		SourceMtimeMs: params.SourceMeta.SourceMtimeMs,
+		IngestVersion: params.SourceMeta.IngestVersion,
+		HashBackend:   params.SourceMeta.HashBackend,
+	}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true}, nil
+}
+
+func (s *Server) handleDeleteAuthoredDocument(ctx context.Context, raw any) (any, error) {
+	var params deleteAuthoredDocumentParams
+	if err := decode(raw, &params); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(params.SourceDoc) == "" {
+		return nil, fmt.Errorf("sourceDoc is required")
+	}
+	if err := s.Store.DeleteAuthoredDocument(ctx, params.SourceDoc); err != nil {
 		return nil, err
 	}
 	return map[string]any{"ok": true}, nil

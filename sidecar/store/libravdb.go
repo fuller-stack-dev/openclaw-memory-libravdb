@@ -42,6 +42,36 @@ type Record struct {
 	Version  uint64         `json:"version"`
 }
 
+type SourceAdapterKind string
+
+const (
+	SourceAdapterKindUnknown  SourceAdapterKind = ""
+	SourceAdapterKindGeneric  SourceAdapterKind = "generic"
+	SourceAdapterKindObsidian SourceAdapterKind = "obsidian"
+)
+
+func ParseSourceAdapterKind(value string) SourceAdapterKind {
+	switch SourceAdapterKind(strings.ToLower(strings.TrimSpace(value))) {
+	case SourceAdapterKindGeneric:
+		return SourceAdapterKindGeneric
+	case SourceAdapterKindObsidian:
+		return SourceAdapterKindObsidian
+	default:
+		return SourceAdapterKindUnknown
+	}
+}
+
+type MarkdownSourceMetadata struct {
+	SourceRoot    string
+	SourcePath    string
+	SourceKind    SourceAdapterKind
+	FileHash      string
+	SourceSize    int64
+	SourceMtimeMs int64
+	IngestVersion int
+	HashBackend   string
+}
+
 type SearchResult struct {
 	ID       string         `json:"id"`
 	Score    float64        `json:"score"`
@@ -278,7 +308,7 @@ func (tx *WriteTx) DeleteBatch(ctx context.Context, collection string, ids []str
 	return tx.tx.DeleteBatch(ctx, collection, ids)
 }
 
-func (s *Store) PersistAuthoredDocument(ctx context.Context, doc astv2.Document, coreDoc bool) error {
+func (s *Store) PersistAuthoredDocument(ctx context.Context, doc astv2.Document, coreDoc bool, sourceMeta MarkdownSourceMetadata) error {
 	if doc.SourceDoc == "" {
 		return errors.New("authored source doc is required")
 	}
@@ -296,7 +326,7 @@ func (s *Store) PersistAuthoredDocument(ctx context.Context, doc astv2.Document,
 			return fmt.Errorf("unknown authored tier %d for %s/%d", node.Tier, doc.SourceDoc, node.Ordinal)
 		}
 
-		meta := authoredMetadata(doc, node, coreDoc)
+		meta := authoredMetadata(doc, node, coreDoc, sourceMeta)
 		id := authoredRecordID(doc.SourceDoc, node.Ordinal)
 		switch node.Tier {
 		case astv2.TierHard, astv2.TierSoft:
@@ -313,6 +343,21 @@ func (s *Store) PersistAuthoredDocument(ctx context.Context, doc astv2.Document,
 	}
 
 	return nil
+}
+
+func (s *Store) PersistAuthoredMarkdownDocument(ctx context.Context, sourceDoc string, raw []byte, tokenizerID string, coreDoc bool, sourceMeta MarkdownSourceMetadata) error {
+	doc, err := astv2.ExtractDocument(sourceDoc, raw, tokenizerID)
+	if err != nil {
+		return err
+	}
+	return s.PersistAuthoredDocument(ctx, doc, coreDoc, sourceMeta)
+}
+
+func (s *Store) DeleteAuthoredDocument(ctx context.Context, sourceDoc string) error {
+	if sourceDoc == "" {
+		return errors.New("authored source doc is required")
+	}
+	return s.deleteAuthoredSourceDoc(ctx, sourceDoc)
 }
 
 func (s *Store) EnsureAuthoredCollections(ctx context.Context) error {
@@ -976,7 +1021,7 @@ func authoredRecordID(sourceDoc string, ordinal int) string {
 	return fmt.Sprintf("%s#%06d", sourceDoc, ordinal)
 }
 
-func authoredMetadata(doc astv2.Document, node astv2.Node, coreDoc bool) map[string]any {
+func authoredMetadata(doc astv2.Document, node astv2.Node, coreDoc bool, sourceMeta MarkdownSourceMetadata) map[string]any {
 	authority := 0.0
 	if coreDoc {
 		authority = 1.0
@@ -996,6 +1041,30 @@ func authoredMetadata(doc astv2.Document, node astv2.Node, coreDoc bool) map[str
 		"authored":       true,
 		"is_core_doc":    coreDoc,
 		"access_count":   0,
+	}
+	if sourceMeta.SourceRoot != "" {
+		meta["source_root"] = sourceMeta.SourceRoot
+	}
+	if sourceMeta.SourcePath != "" {
+		meta["source_path"] = sourceMeta.SourcePath
+	}
+	if sourceMeta.SourceKind != SourceAdapterKindUnknown {
+		meta["source_kind"] = string(sourceMeta.SourceKind)
+	}
+	if sourceMeta.FileHash != "" {
+		meta["file_hash"] = sourceMeta.FileHash
+	}
+	if sourceMeta.SourceSize > 0 {
+		meta["source_size"] = sourceMeta.SourceSize
+	}
+	if sourceMeta.SourceMtimeMs > 0 {
+		meta["source_mtime_ms"] = sourceMeta.SourceMtimeMs
+	}
+	if sourceMeta.IngestVersion > 0 {
+		meta["ingest_version"] = sourceMeta.IngestVersion
+	}
+	if sourceMeta.HashBackend != "" {
+		meta["hash_backend"] = sourceMeta.HashBackend
 	}
 	if len(node.HopTargets) > 0 {
 		meta["hop_targets"] = append([]string(nil), node.HopTargets...)

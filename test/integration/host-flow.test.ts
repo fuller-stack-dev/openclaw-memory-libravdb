@@ -650,6 +650,52 @@ test("context-engine derives the durable namespace from sessionKey when userId i
   assert.equal(userInsert?.metadata?.userId, durableNamespace);
 });
 
+test("assemble uses the sessionKey-derived durable namespace for user recall when userId is absent", async () => {
+  const rpc = new ProjectionStoreRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const sessionKey = "agent:main:channel:conversation";
+  const durableNamespace = resolveDurableNamespace({ sessionKey });
+
+  rpc.collections.set(`session:s1`, []);
+  rpc.collections.set(`session_raw:s1`, []);
+  rpc.collections.set(`user:${durableNamespace}`, [
+    {
+      id: "user-memory-1",
+      score: 0.95,
+      text: "durable namespace memory winner",
+      metadata: {
+        userId: durableNamespace,
+        ts: Date.now(),
+        collection: `user:${durableNamespace}`,
+        token_estimate: 4,
+      },
+    },
+  ]);
+  rpc.collections.set(`elevated:user:${durableNamespace}`, []);
+  rpc.collections.set(`elevated:session:s1`, []);
+  rpc.collections.set("global", []);
+
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    topK: 8,
+    tokenBudgetFraction: 0.4,
+  };
+
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+  await context.bootstrap({ sessionId: "s1", sessionKey });
+
+  const assembled = await context.assemble({
+    sessionId: "s1",
+    sessionKey,
+    messages: [{ role: "user", content: "durable namespace memory winner" }],
+    tokenBudget: 200,
+  });
+
+  assert.ok(rpc.searchedCollections.includes(`user:${durableNamespace}`), "expected user search to use the durable namespace");
+  assert.ok(!rpc.searchedCollections.includes("user:undefined"), "expected no fallback to an undefined user namespace");
+  assert.match(assembled.systemPromptAddition, /durable namespace memory winner/);
+});
+
 test("context-engine falls back to a session-scoped durable namespace when userId and sessionKey are absent", async () => {
   const rpc = new FakeRpc();
   const recallCache = createRecallCache<SearchResult>();

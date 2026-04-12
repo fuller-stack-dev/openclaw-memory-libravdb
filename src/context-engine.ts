@@ -279,7 +279,7 @@ export function buildContextEngineFactory(
           comparisonExperiment,
           emitComparisonProfile,
           sessionId,
-          userId: durableNamespace,
+          durableNamespace,
           visibleMessages: originalMessages,
           messages: normalizedMessages,
           tokenBudget,
@@ -319,7 +319,7 @@ export function buildContextEngineFactory(
       comparisonExperiment,
       emitComparisonProfile,
       sessionId,
-      userId,
+      durableNamespace,
       visibleMessages,
       messages,
       tokenBudget,
@@ -341,7 +341,7 @@ export function buildContextEngineFactory(
       comparisonExperiment: ReturnType<typeof resolveComparisonExperimentConfig>;
       emitComparisonProfile: boolean;
       sessionId: string;
-      userId: string;
+      durableNamespace: string;
       visibleMessages: MemoryMessage[];
       messages: Array<{ role: string; content: string }>;
       tokenBudget: number;
@@ -352,7 +352,7 @@ export function buildContextEngineFactory(
       const hardItems = authoredHard;
       const hardUsed = tokenCostSum(hardItems);
       const dreamMode = dreamQuery.active;
-      const dreamCollection = resolveDreamCollection(userId);
+      const dreamCollection = resolveDreamCollection(durableNamespace);
 
       if (dreamMode) {
         const authoredSoftTarget = Math.max(0, memoryBudget * (cfg.authoredSoftBudgetFraction ?? 0.3));
@@ -382,7 +382,7 @@ export function buildContextEngineFactory(
             authorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
             authorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
             sessionId,
-            userId,
+            userId: durableNamespace,
           },
         );
         const dreamItems = fitPromptBudget(rankedDream, remainingBudget);
@@ -507,7 +507,7 @@ export function buildContextEngineFactory(
           : cached?.userHits
           ? Promise.resolve({ results: cached.userHits })
           : rpc.call<{ results: SearchResult[] }>("search_text", {
-              collection: `user:${userId}`,
+              collection: `user:${durableNamespace}`,
               text: queryText,
               k: Math.ceil((cfg.topK ?? 8) / 2),
             }),
@@ -524,7 +524,7 @@ export function buildContextEngineFactory(
 
       if (!cached && !dreamMode) {
         recallCache.put({
-          userId,
+          userId: durableNamespace,
           queryText,
           durableVariantHits: [],
           userHits: userHits.results,
@@ -552,7 +552,7 @@ export function buildContextEngineFactory(
 
       profiler?.mark("recall_elevated");
       const elevatedGeneration = elevatedRecallGeneration.get(sessionId) ?? 0;
-      const elevatedKey = `${sessionId}\n${elevatedGeneration}\n${userId}\n${queryText}`;
+      const elevatedKey = `${sessionId}\n${elevatedGeneration}\n${durableNamespace}\n${queryText}`;
       const cachedElevated = elevatedRecallCache.get(elevatedKey);
       const [elevatedHits] = await Promise.all([
         dreamMode
@@ -561,7 +561,7 @@ export function buildContextEngineFactory(
           ? Promise.resolve({ results: cachedElevated })
           : rpc.call<{ results: SearchResult[] }>("search_text_collections", {
               collections: [
-                `${ELEVATED_USER_COLLECTION_PREFIX}${userId}`,
+                `${ELEVATED_USER_COLLECTION_PREFIX}${durableNamespace}`,
                 `${ELEVATED_SESSION_COLLECTION_PREFIX}${sessionId}`,
               ],
               text: queryText,
@@ -593,7 +593,7 @@ export function buildContextEngineFactory(
           authorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
           authorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
           sessionId,
-          userId,
+          userId: durableNamespace,
         },
       );
 
@@ -706,12 +706,12 @@ export function buildContextEngineFactory(
           // coarse for exact-turn recall. Search the immutable per-user raw turn index instead of
           // widening topK so precise historical turns still have a bounded path back into context.
           const rawUserResults = await rpc.call<{ results: SearchResult[] }>("search_text", {
-            collection: `turns:${userId}`,
+            collection: `turns:${durableNamespace}`,
             text: queryText,
             k: Math.max((cfg.topK ?? 8) * 4, 8),
             excludeIds: recoveryExcludeIDs,
           });
-          const annotatedUserResults = annotateCollection(rawUserResults.results ?? [], `turns:${userId}`);
+          const annotatedUserResults = annotateCollection(rawUserResults.results ?? [], `turns:${durableNamespace}`);
           temporalRecoveryResult = temporalSelectorGuard.shouldApply
             ? rankTemporalRecoveryCandidates(annotatedUserResults, {
                 queryText,

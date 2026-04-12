@@ -9,6 +9,10 @@ type CloseHandler = () => void;
 type DataHandler = (chunk: string) => void;
 type ErrorHandler = (error: Error) => void;
 
+const STARTUP_CONNECT_MAX_RETRIES = 5;
+const STARTUP_CONNECT_BASE_DELAY_MS = 100;
+const STARTUP_CONNECT_MAX_TOTAL_WAIT_MS = 2000;
+
 export interface SidecarRuntime {
   resolveEndpoint(cfg: PluginConfig): string | Promise<string>;
   createSocket(endpoint: string): SidecarSocket;
@@ -18,6 +22,7 @@ export interface SidecarRuntime {
 class PlaceholderSocket implements SidecarSocket {
   private readonly onData = new Set<DataHandler>();
   private readonly onClose = new Set<CloseHandler>();
+  private readonly onError = new Set<ErrorHandler>();
   private readonly connectOnce = new Set<CloseHandler>();
   private readonly errorOnce = new Set<ErrorHandler>();
 
@@ -32,9 +37,13 @@ class PlaceholderSocket implements SidecarSocket {
 
   setEncoding(_encoding: string): void {}
 
-  on(event: "data" | "close", handler: DataHandler | CloseHandler): void {
+  on(event: "data" | "close" | "error", handler: DataHandler | CloseHandler | ErrorHandler): void {
     if (event === "data") {
       this.onData.add(handler as DataHandler);
+      return;
+    }
+    if (event === "error") {
+      this.onError.add(handler as ErrorHandler);
       return;
     }
     this.onClose.add(handler as CloseHandler);
@@ -61,10 +70,7 @@ class PlaceholderSocket implements SidecarSocket {
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      for (const handler of this.errorOnce) {
-        handler(err);
-      }
-      this.errorOnce.clear();
+      this.emitError(err);
     }
   }
 
@@ -73,11 +79,22 @@ class PlaceholderSocket implements SidecarSocket {
       handler();
     }
   }
+
+  private emitError(error: Error): void {
+    for (const handler of this.onError) {
+      handler(error);
+    }
+    for (const handler of this.errorOnce) {
+      handler(error);
+    }
+    this.errorOnce.clear();
+  }
 }
 
 class SupervisorSocket implements SidecarSocket {
   private readonly onData = new Set<DataHandler>();
   private readonly onClose = new Set<CloseHandler>();
+  private readonly onError = new Set<ErrorHandler>();
   private readonly connectOnce = new Set<CloseHandler>();
   private readonly errorOnce = new Set<ErrorHandler>();
   private current?: SidecarSocket;
@@ -102,9 +119,23 @@ class SupervisorSocket implements SidecarSocket {
       if (generation !== this.generation) {
         return;
       }
+      this.current = undefined;
       for (const handler of this.onClose) {
         handler();
       }
+    });
+    socket.on("error", (error) => {
+      if (generation !== this.generation) {
+        return;
+      }
+      this.current = undefined;
+      for (const handler of this.onError) {
+        handler(error);
+      }
+      for (const handler of this.errorOnce) {
+        handler(error);
+      }
+      this.errorOnce.clear();
     });
 
     for (const handler of this.connectOnce) {
@@ -118,9 +149,13 @@ class SupervisorSocket implements SidecarSocket {
     this.current?.setEncoding(encoding);
   }
 
-  on(event: "data" | "close", handler: DataHandler | CloseHandler): void {
+  on(event: "data" | "close" | "error", handler: DataHandler | CloseHandler | ErrorHandler): void {
     if (event === "data") {
       this.onData.add(handler as DataHandler);
+      return;
+    }
+    if (event === "error") {
+      this.onError.add(handler as ErrorHandler);
       return;
     }
     this.onClose.add(handler as CloseHandler);
@@ -154,6 +189,7 @@ class SidecarSupervisor implements SidecarHandle {
   private retries = 0;
   private degraded = false;
   private shuttingDown = false;
+  private reconnectScheduled = false;
   public socket: SidecarSocket;
 
   constructor(
@@ -166,7 +202,8 @@ class SidecarSupervisor implements SidecarHandle {
 
   async start(): Promise<SidecarSocket> {
     const endpoint = await this.runtime.resolveEndpoint(this.cfg);
-    const socket = await this.connectEndpoint(endpoint);
+    const socket = await this.connectEndpointWithRetry(endpoint);
+    this.reconnectScheduled = false;
     if (this.socket instanceof SupervisorSocket) {
       this.socket.bind(socket);
     } else {
@@ -184,21 +221,48 @@ class SidecarSupervisor implements SidecarHandle {
     this.socket.destroy();
   }
 
-  private async connectEndpoint(endpoint: string): Promise<SidecarSocket> {
-    const socket = this.runtime.createSocket(endpoint);
-    socket.on("close", () => {
-      void this.handleExit(1);
-    });
-
+  private async connectEndpointWithRetry(endpoint: string): Promise<SidecarSocket> {
     if (isTcpEndpoint(endpoint)) {
       this.logger.info?.(`[libravdb] using TCP endpoint ${endpoint}`);
     } else {
       this.logger.info?.(`[libravdb] using Unix socket ${endpoint}`);
     }
 
+    let waitedMs = 0;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.connectEndpoint(endpoint);
+      } catch (error) {
+        if (!isStartupConnectRetryableError(error) || attempt >= STARTUP_CONNECT_MAX_RETRIES - 1) {
+          throw error;
+        }
+
+        const delayMs = computeStartupConnectRetryDelay(attempt, waitedMs);
+        if (delayMs <= 0) {
+          throw error;
+        }
+        waitedMs += delayMs;
+        this.logger.info?.(
+          `[libravdb] Daemon not ready, retrying connection (attempt ${attempt + 1}/${STARTUP_CONNECT_MAX_RETRIES})...`,
+        );
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  private async connectEndpoint(endpoint: string): Promise<SidecarSocket> {
+    const socket = this.runtime.createSocket(endpoint);
     return await new Promise<SidecarSocket>((resolve, reject) => {
-      socket.once("connect", () => resolve(socket));
-      socket.once("error", (error) => reject(formatConnectionError(endpoint, error)));
+      socket.once("connect", () => {
+        socket.on("close", () => {
+          void this.handleExit(1);
+        });
+        resolve(socket);
+      });
+      socket.once("error", (error) => {
+        socket.destroy();
+        reject(formatConnectionError(endpoint, error));
+      });
     });
   }
 
@@ -207,6 +271,9 @@ class SidecarSupervisor implements SidecarHandle {
       return;
     }
     if (code === 0) {
+      return;
+    }
+    if (this.reconnectScheduled) {
       return;
     }
 
@@ -219,8 +286,10 @@ class SidecarSupervisor implements SidecarHandle {
 
     const backoffMs = computeBackoffMs(this.retries);
     this.retries += 1;
+    this.reconnectScheduled = true;
     this.runtime.scheduleRestart(backoffMs, () => {
       void this.start().catch((error) => {
+        this.reconnectScheduled = false;
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`[libravdb] sidecar reconnect failed: ${message}`);
       });
@@ -240,6 +309,17 @@ export async function startSidecar(
 
 export function computeBackoffMs(retries: number): number {
   return Math.min(500 * Math.pow(2, retries), 16000);
+}
+
+export function computeStartupConnectRetryDelay(attempt: number, waitedMs = 0): number {
+  if (attempt < 0) {
+    return 0;
+  }
+  const remainingMs = STARTUP_CONNECT_MAX_TOTAL_WAIT_MS - waitedMs;
+  if (remainingMs <= 0) {
+    return 0;
+  }
+  return Math.min(STARTUP_CONNECT_BASE_DELAY_MS * Math.pow(2, attempt), remainingMs);
 }
 
 export function isTcpEndpoint(endpoint: string): boolean {
@@ -423,16 +503,29 @@ function createDefaultRuntime(): SidecarRuntime {
   };
 }
 
+function isStartupConnectRetryableError(error: unknown): boolean {
+  const code = typeof (error as NodeJS.ErrnoException | undefined)?.code === "string"
+    ? (error as NodeJS.ErrnoException).code
+    : "";
+  return code === "ENOENT" || code === "ECONNREFUSED";
+}
+
 function formatConnectionError(endpoint: string, error: Error): Error {
   const code = typeof (error as NodeJS.ErrnoException).code === "string"
     ? (error as NodeJS.ErrnoException).code
     : "";
+  const annotated = error instanceof Error ? error : new Error(String(error));
+  if (code) {
+    (annotated as NodeJS.ErrnoException).code = code;
+  }
   if (code === "ENOENT" || code === "ECONNREFUSED") {
-    return new Error(
+    const unavailable = new Error(
       `LibraVDB daemon unavailable at ${describeEndpoint(endpoint)}. ${daemonProvisioningHint()} Or set sidecarPath to a running daemon endpoint.`,
     );
+    (unavailable as NodeJS.ErrnoException).code = code;
+    return unavailable;
   }
-  return error;
+  return annotated;
 }
 
 function describeEndpoint(endpoint: string): string {
@@ -447,6 +540,10 @@ function isConfiguredEndpoint(value?: string): boolean {
 }
 
 export { PlaceholderSocket };
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
 
 export async function probeSidecarEndpoint(cfg: PluginConfig): Promise<string | null> {
   const endpoint = resolveConfiguredEndpoint(cfg);

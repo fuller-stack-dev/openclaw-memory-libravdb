@@ -279,6 +279,13 @@ export function rankTemporalRecoveryCandidates(
   const temporalQuery = detectTemporalQuerySignal(opts.queryText);
   const slots = extractTemporalSlots(opts.queryText);
   const isComparisonQuery = temporalQuery.matchedPatterns.includes("first or earlier");
+  // Duration-interval queries ("how many days ... after", "how long ... since") require explicit
+  // date anchors to be answerable. The soft-blend scorer can otherwise let an anchor-free turn
+  // outrank anchor-bearing ones when the semantic signal is still high.
+  const isDurationIntervalQuery = !isComparisonQuery && (
+    temporalQuery.matchedPatterns.includes("how many days") ||
+    temporalQuery.matchedPatterns.includes("how long")
+  );
   const effectiveSlots = isComparisonQuery ? filterComparisonSlots(slots) : slots;
   const comparisonSlots = isComparisonQuery ? deriveComparisonSideSlots(effectiveSlots) : [];
   const recencyLambda = Math.max(0, opts.recencyLambda ?? 0.00001);
@@ -298,6 +305,16 @@ export function rankTemporalRecoveryCandidates(
     if (comparisonProfile) {
       comparisonProfile.rawCandidateCount = items.length;
     }
+
+    // Pre-scan anchor density only for duration-interval queries so the gate below can verify at
+    // least one anchor-bearing candidate exists before zeroing anchor-free ones. Cached, so the
+    // re-check inside the map is cheap.
+    const anyAnchorBearing = isDurationIntervalQuery && items.some((item) =>
+      getTemporalAnchorDensity(
+        `${typeof item.metadata.collection === "string" ? item.metadata.collection : "unknown"}::${item.id}`,
+        item.text,
+      ) > 0,
+    );
 
     const decorateStart = comparisonProfile ? process.hrtime.bigint() : 0n;
     const decorated = items.map((item) => {
@@ -331,6 +348,10 @@ export function rankTemporalRecoveryCandidates(
           comparisonSideWitnessScore,
           temporalQueryActive: temporalQuery.active,
         })
+        // Duration-interval gate: if we have at least one anchor-bearing candidate, anchor-free
+        // candidates cannot answer the date question and should stay below the greedy threshold.
+        : isDurationIntervalQuery && anyAnchorBearing && temporalAnchorDensity === 0
+          ? 0
         : (0.40 * semanticScore) +
           (0.25 * recencyScore) +
           (0.20 * temporalAnchorDensity) +

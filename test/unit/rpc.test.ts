@@ -7,14 +7,16 @@ import type { SidecarSocket } from "../../src/types.js";
 class FakeSocket implements SidecarSocket {
   private dataHandlers: Array<(chunk: string) => void> = [];
   private closeHandlers: Array<() => void> = [];
+  private errorHandlers: Array<(error: Error) => void> = [];
   private connectOnce: Array<() => void> = [];
   private errorOnce: Array<(error: Error) => void> = [];
   public writes: string[] = [];
 
   setEncoding(_encoding: string): void {}
 
-  on(event: "data" | "close", handler: ((chunk: string) => void) | (() => void)): void {
+  on(event: "data" | "close" | "error", handler: ((chunk: string) => void) | (() => void) | ((error: Error) => void)): void {
     if (event === "data") this.dataHandlers.push(handler as (chunk: string) => void);
+    else if (event === "error") this.errorHandlers.push(handler as (error: Error) => void);
     else this.closeHandlers.push(handler as () => void);
   }
 
@@ -33,6 +35,12 @@ class FakeSocket implements SidecarSocket {
 
   emitData(chunk: string): void {
     for (const handler of this.dataHandlers) handler(chunk);
+  }
+
+  emitError(error: Error): void {
+    for (const handler of this.errorHandlers) handler(error);
+    for (const handler of this.errorOnce) handler(error);
+    this.errorOnce = [];
   }
 }
 
@@ -62,4 +70,21 @@ test("RpcClient rejects pending calls on close", async () => {
   socket.destroy();
 
   await assert.rejects(pending, /Socket closed/);
+});
+
+test("RpcClient rejects pending calls on runtime socket error", async () => {
+  const socket = new FakeSocket();
+  const client = new RpcClient(socket, { timeoutMs: 100 });
+
+  const pending = client.call("health", {});
+  socket.emitError(new Error("ECONNRESET"));
+
+  await assert.rejects(pending, /ECONNRESET/);
+});
+
+test("RpcClient supports per-call timeout overrides", async () => {
+  const socket = new FakeSocket();
+  const client = new RpcClient(socket, { timeoutMs: 100 });
+
+  await assert.rejects(client.call("health", {}, { timeoutMs: 10 }), /10ms/);
 });

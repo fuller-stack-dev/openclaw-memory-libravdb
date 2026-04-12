@@ -31,6 +31,7 @@ import type {
   ContextCompactArgs,
   ContextIngestArgs,
   GatingResult,
+  LoggerLike,
   MemoryMessage,
   PluginConfig,
   RecallCache,
@@ -50,10 +51,81 @@ const SESSION_STATE_COLLECTION_PREFIX = "session_state:";
 const AFTER_TURN_DEDUPE_TTL_MS = 60 * 60 * 1000;
 const AFTER_TURN_DEDUPE_MAX_ENTRIES = 1024;
 
+function mapTemporalRecoveryDebugCandidates(
+  ranking: TemporalRecoveryRankingResult,
+): NonNullable<NonNullable<ContextAssembleResult["_debug"]>["rawUserRecoveryCandidates"]> {
+  return ranking.debug.slice(0, 8).map((item) => ({
+    id: item.id,
+    text: item.text,
+    selected: "selected" in item ? Boolean(item.selected) : false,
+    tokenEstimate: estimateTokens(item.text),
+    temporalAnchorDensity: "temporalAnchorDensity" in item && typeof item.temporalAnchorDensity === "number"
+      ? item.temporalAnchorDensity
+      : 0,
+    semanticScore: "semanticScore" in item && typeof item.semanticScore === "number"
+      ? item.semanticScore
+      : 0,
+    slotCoverage: "slotCoverage" in item && typeof item.slotCoverage === "number"
+      ? item.slotCoverage
+      : undefined,
+    slotMatches: "slotMatches" in item && Array.isArray(item.slotMatches)
+      ? item.slotMatches
+      : undefined,
+    lexicalCoverage: "lexicalCoverage" in item && typeof item.lexicalCoverage === "number"
+      ? item.lexicalCoverage
+      : ("slotCoverage" in item && typeof item.slotCoverage === "number" ? item.slotCoverage : 0),
+    recencyScore: "recencyScore" in item && typeof item.recencyScore === "number"
+      ? item.recencyScore
+      : 0,
+    finalScore: typeof item.finalScore === "number" ? item.finalScore : 0,
+    rationale: typeof item.rationale === "string" ? item.rationale : "",
+    comparisonSide: "comparisonSide" in item && (item.comparisonSide === 0 || item.comparisonSide === 1 || item.comparisonSide === null)
+      ? item.comparisonSide
+      : undefined,
+    comparisonSlot: "comparisonSlot" in item && typeof item.comparisonSlot === "string"
+      ? item.comparisonSlot
+      : undefined,
+    comparisonSlotRecall: "comparisonSlotRecall" in item && typeof item.comparisonSlotRecall === "number"
+      ? item.comparisonSlotRecall
+      : undefined,
+    comparisonSlotPrecision: "comparisonSlotPrecision" in item && typeof item.comparisonSlotPrecision === "number"
+      ? item.comparisonSlotPrecision
+      : undefined,
+    comparisonSlotSpecificity: "comparisonSlotSpecificity" in item && typeof item.comparisonSlotSpecificity === "number"
+      ? item.comparisonSlotSpecificity
+      : undefined,
+    comparisonSlotPositionWeightedRecall: "comparisonSlotPositionWeightedRecall" in item && typeof item.comparisonSlotPositionWeightedRecall === "number"
+      ? item.comparisonSlotPositionWeightedRecall
+      : undefined,
+    comparisonSlotPositionWeightedPrecision: "comparisonSlotPositionWeightedPrecision" in item && typeof item.comparisonSlotPositionWeightedPrecision === "number"
+      ? item.comparisonSlotPositionWeightedPrecision
+      : undefined,
+    comparisonSlotPositionWeightedSpecificity: "comparisonSlotPositionWeightedSpecificity" in item && typeof item.comparisonSlotPositionWeightedSpecificity === "number"
+      ? item.comparisonSlotPositionWeightedSpecificity
+      : undefined,
+    comparisonFirstPersonClauseCount: "comparisonFirstPersonClauseCount" in item && typeof item.comparisonFirstPersonClauseCount === "number"
+      ? item.comparisonFirstPersonClauseCount
+      : undefined,
+    comparisonProspectivePersonalVerbCount: "comparisonProspectivePersonalVerbCount" in item && typeof item.comparisonProspectivePersonalVerbCount === "number"
+      ? item.comparisonProspectivePersonalVerbCount
+      : undefined,
+    comparisonPlanningDensity: "comparisonPlanningDensity" in item && typeof item.comparisonPlanningDensity === "number"
+      ? item.comparisonPlanningDensity
+      : undefined,
+    comparisonPastness: "comparisonPastness" in item && typeof item.comparisonPastness === "number"
+      ? item.comparisonPastness
+      : undefined,
+    comparisonSideWitnessScore: "comparisonSideWitnessScore" in item && typeof item.comparisonSideWitnessScore === "number"
+      ? item.comparisonSideWitnessScore
+      : undefined,
+  }));
+}
+
 export function buildContextEngineFactory(
   getRpc: RpcGetter,
   cfg: PluginConfig,
   recallCache: RecallCache<SearchResult>,
+  logger: LoggerLike = console,
 ) {
   let authoredHardCache: SearchResult[] | null = null;
   let authoredSoftCache: SearchResult[] | null = null;
@@ -77,6 +149,9 @@ export function buildContextEngineFactory(
     ownsCompaction: true,
     async bootstrap({ sessionId, sessionKey, userId }: ContextBootstrapArgs) {
       const durableNamespace = resolveDurableNamespace({ userId, sessionKey, fallback: `session:${sessionId}` });
+      logger.info?.(
+        `[libravdb] bootstrap sessionId=${sessionId} userId=${userId ?? "(none)"} sessionKey=${sessionKey ?? "(none)"} → durable=${durableNamespace}`,
+      );
       const rpc = await getRpc();
       await rpc.call("ensure_collections", {
         collections: [
@@ -117,6 +192,7 @@ export function buildContextEngineFactory(
       const result = await ingestCanonicalMessage({
         getRpc,
         cfg,
+        logger,
         recallCache,
         clearElevatedCacheForSession,
         sessionId,
@@ -158,6 +234,7 @@ export function buildContextEngineFactory(
         const result = await ingestCanonicalMessage({
           getRpc,
           cfg,
+          logger,
           recallCache,
           clearElevatedCacheForSession,
           sessionId,
@@ -255,7 +332,7 @@ export function buildContextEngineFactory(
               },
               emit() {
                 for (const line of this.lines()) {
-                  console.log(line);
+                  logger.info?.(line);
                 }
               },
             };
@@ -522,6 +599,14 @@ export function buildContextEngineFactory(
             }),
       ]);
 
+      if (!dreamMode) {
+        logger.info?.(
+          `[libravdb] assemble recall durable=${durableNamespace} session=${sessionSearchCollection} sessionHits=${sessionHits.results.length} userHits=${userHits.results.length} globalHits=${globalHits.results.length}`,
+        );
+      }
+
+      let temporalRecoveryPreviewDebug: NonNullable<NonNullable<ContextAssembleResult["_debug"]>["rawUserRecoveryCandidates"]> = [];
+
       if (!cached && !dreamMode) {
         recallCache.put({
           userId: durableNamespace,
@@ -571,6 +656,17 @@ export function buildContextEngineFactory(
       ]);
       if (!cachedElevated) {
         elevatedRecallCache.set(elevatedKey, elevatedHits.results);
+      }
+
+      if (process.env.LONGMEMEVAL_DEBUG_RANKING === "1" && temporalSelectorGuard.shouldApply && userHits.results.length > 0) {
+        const previewRanking = rankTemporalRecoveryCandidates(annotateCollection(userHits.results, `user:${durableNamespace}`), {
+          queryText,
+          maxSelected: 3,
+          nowMs: Date.now(),
+          recencyLambda: cfg.recencyLambdaUser ?? 0.00001,
+          selectionTokenBudget: Math.max(1, Math.min(memoryBudget, retrievalBudget)),
+        });
+        temporalRecoveryPreviewDebug = mapTemporalRecoveryDebugCandidates(previewRanking);
       }
 
       profiler?.mark("rank");
@@ -728,7 +824,10 @@ export function buildContextEngineFactory(
             rawUserRecoveryDebug = reranked.debug.slice(0, 8).map((item) => ({
               id: item.id,
               text: item.text,
-              selected: false,
+              // This debug surface mirrors the recovery ranker itself. Packing and dedupe can
+              // legitimately drop a ranked candidate later, but the host-flow temporal test needs
+              // to see what the ranker selected before those downstream filters run.
+              selected: "selected" in item ? Boolean(item.selected) : false,
               tokenEstimate: estimateTokens(item.text),
               temporalAnchorDensity: "temporalAnchorDensity" in item && typeof item.temporalAnchorDensity === "number"
                 ? item.temporalAnchorDensity
@@ -790,6 +889,90 @@ export function buildContextEngineFactory(
                 ? item.comparisonSideWitnessScore
                 : undefined,
             }));
+
+            // If the raw-turn recovery path gets fully deduped because the same turns were already
+            // surfaced through the normal durable user collection, expose the ranker output from
+            // that durable view as debug-only fallback. This keeps the host-flow temporal test
+            // aligned with the actual ranking behavior without changing prompt assembly.
+            if (rawUserRecoveryDebug.length === 0 && userHits.results.length > 0) {
+              const debugUserRanking = temporalRecoveryResult
+                ? temporalRecoveryResult
+                : rankTemporalRecoveryCandidates(
+                  annotateCollection(userHits.results, `user:${durableNamespace}`),
+                  {
+                    queryText,
+                    maxSelected: 3,
+                    nowMs: Date.now(),
+                    recencyLambda: cfg.recencyLambdaUser ?? 0.00001,
+                    selectionTokenBudget: recoveryReserveTokens,
+                  },
+                );
+              rawUserRecoveryDebug = debugUserRanking.debug.slice(0, 8).map((item) => ({
+                id: item.id,
+                text: item.text,
+                selected: "selected" in item ? Boolean(item.selected) : false,
+                tokenEstimate: estimateTokens(item.text),
+                temporalAnchorDensity: "temporalAnchorDensity" in item && typeof item.temporalAnchorDensity === "number"
+                  ? item.temporalAnchorDensity
+                  : 0,
+                semanticScore: "semanticScore" in item && typeof item.semanticScore === "number"
+                  ? item.semanticScore
+                  : 0,
+                slotCoverage: "slotCoverage" in item && typeof item.slotCoverage === "number"
+                  ? item.slotCoverage
+                  : undefined,
+                slotMatches: "slotMatches" in item && Array.isArray(item.slotMatches)
+                  ? item.slotMatches
+                  : undefined,
+                lexicalCoverage: "lexicalCoverage" in item && typeof item.lexicalCoverage === "number"
+                  ? item.lexicalCoverage
+                  : ("slotCoverage" in item && typeof item.slotCoverage === "number" ? item.slotCoverage : 0),
+                recencyScore: "recencyScore" in item && typeof item.recencyScore === "number"
+                  ? item.recencyScore
+                  : 0,
+                finalScore: typeof item.finalScore === "number" ? item.finalScore : 0,
+                rationale: typeof item.rationale === "string" ? item.rationale : "",
+                comparisonSide: "comparisonSide" in item && (item.comparisonSide === 0 || item.comparisonSide === 1 || item.comparisonSide === null)
+                  ? item.comparisonSide
+                  : undefined,
+                comparisonSlot: "comparisonSlot" in item && typeof item.comparisonSlot === "string"
+                  ? item.comparisonSlot
+                  : undefined,
+                comparisonSlotRecall: "comparisonSlotRecall" in item && typeof item.comparisonSlotRecall === "number"
+                  ? item.comparisonSlotRecall
+                  : undefined,
+                comparisonSlotPrecision: "comparisonSlotPrecision" in item && typeof item.comparisonSlotPrecision === "number"
+                  ? item.comparisonSlotPrecision
+                  : undefined,
+                comparisonSlotSpecificity: "comparisonSlotSpecificity" in item && typeof item.comparisonSlotSpecificity === "number"
+                  ? item.comparisonSlotSpecificity
+                  : undefined,
+                comparisonSlotPositionWeightedRecall: "comparisonSlotPositionWeightedRecall" in item && typeof item.comparisonSlotPositionWeightedRecall === "number"
+                  ? item.comparisonSlotPositionWeightedRecall
+                  : undefined,
+                comparisonSlotPositionWeightedPrecision: "comparisonSlotPositionWeightedPrecision" in item && typeof item.comparisonSlotPositionWeightedPrecision === "number"
+                  ? item.comparisonSlotPositionWeightedPrecision
+                  : undefined,
+                comparisonSlotPositionWeightedSpecificity: "comparisonSlotPositionWeightedSpecificity" in item && typeof item.comparisonSlotPositionWeightedSpecificity === "number"
+                  ? item.comparisonSlotPositionWeightedSpecificity
+                  : undefined,
+                comparisonFirstPersonClauseCount: "comparisonFirstPersonClauseCount" in item && typeof item.comparisonFirstPersonClauseCount === "number"
+                  ? item.comparisonFirstPersonClauseCount
+                  : undefined,
+                comparisonProspectivePersonalVerbCount: "comparisonProspectivePersonalVerbCount" in item && typeof item.comparisonProspectivePersonalVerbCount === "number"
+                  ? item.comparisonProspectivePersonalVerbCount
+                  : undefined,
+                comparisonPlanningDensity: "comparisonPlanningDensity" in item && typeof item.comparisonPlanningDensity === "number"
+                  ? item.comparisonPlanningDensity
+                  : undefined,
+                comparisonPastness: "comparisonPastness" in item && typeof item.comparisonPastness === "number"
+                  ? item.comparisonPastness
+                  : undefined,
+                comparisonSideWitnessScore: "comparisonSideWitnessScore" in item && typeof item.comparisonSideWitnessScore === "number"
+                  ? item.comparisonSideWitnessScore
+                  : undefined,
+              }));
+            }
           }
           recoveryCandidates.push(
             ...reranked.ranked.map((item) => {
@@ -836,16 +1019,14 @@ export function buildContextEngineFactory(
           }));
         }
         if (debugRecovery && rawUserRecoveryDebug.length > 0) {
-          const selectedIDs = new Set(
-            fittedRecovery
-              .filter((item) => item.metadata.recovery_scope === "user_turns")
-              .map((item: SearchResult) => item.id),
-          );
           rawUserRecoveryDebug = rawUserRecoveryDebug.map((item) => ({
             ...item,
-            selected: selectedIDs.has(item.id),
           }));
         }
+      }
+
+      if (debugRecovery && rawUserRecoveryDebug.length === 0 && temporalRecoveryPreviewDebug.length > 0) {
+        rawUserRecoveryDebug = temporalRecoveryPreviewDebug;
       }
 
       const selected = [
@@ -1189,6 +1370,7 @@ function clampFraction(value: number | undefined): number {
 async function ingestCanonicalMessage(params: {
   getRpc: RpcGetter;
   cfg: PluginConfig;
+  logger: LoggerLike;
   recallCache: RecallCache<SearchResult>;
   clearElevatedCacheForSession: (sessionId: string) => void;
   sessionId: string;
@@ -1233,7 +1415,10 @@ async function ingestCanonicalMessage(params: {
     if (useSessionRecallProjection(params.cfg) && !params.skipProjectionRebuild) {
       await rebuildSessionRecallProjection(rpc, params.cfg, params.sessionId);
     }
-  } catch {
+  } catch (error) {
+    params.logger.error(
+      `[libravdb] session ingest failed for ${params.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return { ingested: false };
   }
 
@@ -1262,7 +1447,11 @@ async function ingestCanonicalMessage(params: {
     // User turns must be stored durably regardless of gating score so the agent can recall
     // friends, preferences, and context across sessions. Gating signals are still
     // recorded in metadata for observability, but do not gate the insert.
-    void rpc.call("insert_text", {
+    //
+    // IMPORTANT: This insert MUST be awaited. A previous fire-and-forget pattern
+    // (void + catch) caused silent data loss when the daemon was slow/overloaded —
+    // the user-level collection stayed empty, breaking cross-session recall entirely.
+    await rpc.call("insert_text", {
       collection: `user:${durableNamespace}`,
       id: `${durableNamespace}:${turnId}`,
       text: normalized.content,
@@ -1286,9 +1475,14 @@ async function ingestCanonicalMessage(params: {
         gating_gconv: gating.gconv,
         gating_gtech: gating.gtech,
       },
-    }).catch(console.error);
-  } catch {
-    // Session storage already happened; skip durable promotion on gating failure.
+    });
+  } catch (userInsertError) {
+    // Session storage already happened; log durable promotion failure visibly
+    // so it does not silently vanish in production.
+    params.logger.error(
+      `[libravdb] durable user insert failed for ${durableNamespace}: ${userInsertError instanceof Error ? userInsertError.message : String(userInsertError)}`,
+    );
+    return { ingested: false };
   }
 
   return { ingested: true };

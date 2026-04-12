@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RpcClient } from "../../src/rpc.js";
-import { resolveEndpoint, startSidecar, type SidecarRuntime } from "../../src/sidecar.js";
-import type { LoggerLike, PluginConfig, SidecarSocket } from "../../src/types.js";
+import { computeStartupConnectRetryDelay, resolveEndpoint, startSidecar, type SidecarRuntime } from "../../src/sidecar.js";
+import type { PluginConfig, SidecarSocket } from "../../src/types.js";
+import { createMemoryLogger } from "../helpers/logger.js";
 
 type CloseHandler = () => void;
 type DataHandler = (chunk: string) => void;
@@ -12,8 +13,10 @@ type ErrorHandler = (error: Error) => void;
 class ControlledSocket implements SidecarSocket {
   private readonly onData = new Set<DataHandler>();
   private readonly onClose = new Set<CloseHandler>();
+  private readonly onError = new Set<ErrorHandler>();
   private readonly connectOnce = new Set<CloseHandler>();
   private readonly errorOnce = new Set<ErrorHandler>();
+  public autoRespond = true;
 
   constructor(public readonly endpoint: string) {
     queueMicrotask(() => {
@@ -26,9 +29,13 @@ class ControlledSocket implements SidecarSocket {
 
   setEncoding(_encoding: string): void {}
 
-  on(event: "data" | "close", handler: DataHandler | CloseHandler): void {
+  on(event: "data" | "close" | "error", handler: DataHandler | CloseHandler | ErrorHandler): void {
     if (event === "data") {
       this.onData.add(handler as DataHandler);
+      return;
+    }
+    if (event === "error") {
+      this.onError.add(handler as ErrorHandler);
       return;
     }
     this.onClose.add(handler as CloseHandler);
@@ -43,6 +50,9 @@ class ControlledSocket implements SidecarSocket {
   }
 
   write(chunk: string): void {
+    if (!this.autoRespond) {
+      return;
+    }
     try {
       const msg = JSON.parse(chunk) as { id: number; method: string };
       const response = JSON.stringify({
@@ -55,10 +65,7 @@ class ControlledSocket implements SidecarSocket {
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      for (const handler of this.errorOnce) {
-        handler(err);
-      }
-      this.errorOnce.clear();
+      this.emitError(err);
     }
   }
 
@@ -71,19 +78,16 @@ class ControlledSocket implements SidecarSocket {
       handler();
     }
   }
-}
 
-function createLogger(): LoggerLike & { infos: string[]; errors: string[] } {
-  return {
-    infos: [],
-    errors: [],
-    info(message: string) {
-      this.infos.push(message);
-    },
-    error(message: string) {
-      this.errors.push(message);
-    },
-  };
+  emitError(error: Error): void {
+    for (const handler of this.onError) {
+      handler(error);
+    }
+    for (const handler of this.errorOnce) {
+      handler(error);
+    }
+    this.errorOnce.clear();
+  }
 }
 
 function flushAsyncWork(): Promise<void> {
@@ -115,7 +119,7 @@ function createRuntime(config: {
 
 test("sidecar crash mid-session reconnects within the restart window", async () => {
   const runtime = createRuntime({});
-  const logger = createLogger();
+  const logger = createMemoryLogger();
   const handle = await startSidecar({ rpcTimeoutMs: 50, maxRetries: 2 }, logger, runtime.runtime);
   const rpc = new RpcClient(handle.socket, { timeoutMs: 50 });
 
@@ -135,9 +139,31 @@ test("sidecar crash mid-session reconnects within the restart window", async () 
   assert.equal(handle.isDegraded(), false);
 });
 
+test("sidecar runtime socket errors reject pending RPCs and recover after restart", async () => {
+  const runtime = createRuntime({});
+  const logger = createMemoryLogger();
+  const handle = await startSidecar({ rpcTimeoutMs: 50, maxRetries: 2 }, logger, runtime.runtime);
+  const rpc = new RpcClient(handle.socket, { timeoutMs: 50 });
+
+  runtime.sockets[0]!.autoRespond = false;
+  const pending = rpc.call("health", {});
+  runtime.sockets[0]!.emitError(new Error("ECONNRESET"));
+  await assert.rejects(pending, /ECONNRESET/);
+
+  runtime.sockets[0]!.emitClose();
+  await flushAsyncWork();
+  assert.equal(runtime.scheduled.length, 1);
+
+  runtime.scheduled[0]!.restart();
+  await flushAsyncWork();
+
+  await assert.doesNotReject(() => rpc.call("health", {}));
+  assert.equal(handle.isDegraded(), false);
+});
+
 test("sidecar enters degraded mode after exhausting retry budget", async () => {
   const runtime = createRuntime({});
-  const logger = createLogger();
+  const logger = createMemoryLogger();
   const handle = await startSidecar({ rpcTimeoutMs: 50, maxRetries: 1 }, logger, runtime.runtime);
 
   runtime.sockets[0]?.emitClose();
@@ -155,7 +181,7 @@ test("sidecar enters degraded mode after exhausting retry budget", async () => {
 
 test("windows tcp fallback path starts and serves RPC traffic end to end", async () => {
   const runtime = createRuntime({});
-  const logger = createLogger();
+  const logger = createMemoryLogger();
   const handle = await startSidecar(
     { rpcTimeoutMs: 50, sidecarPath: "tcp:127.0.0.1:7777" },
     logger,
@@ -188,7 +214,55 @@ test("missing daemon errors point users at libravdbd instead of spawn internals"
   });
 
   await assert.rejects(
-    () => startSidecar({ rpcTimeoutMs: 50 }, createLogger(), runtime.runtime),
+    () => startSidecar({ rpcTimeoutMs: 50 }, createMemoryLogger(), runtime.runtime),
     /install and start libravdbd separately/i,
+  );
+});
+
+test("startup connect retries ENOENT until the daemon becomes available", async () => {
+  const runtime = createRuntime({});
+  const logger = createMemoryLogger();
+  let remainingFailures = 2;
+
+  runtime.runtime.createSocket = (endpoint) => {
+    if (remainingFailures > 0) {
+      remainingFailures -= 1;
+      return {
+        setEncoding() {},
+        on() {},
+        once(event, handler) {
+          if (event === "error") {
+            queueMicrotask(() => (handler as (error: Error) => void)(Object.assign(new Error("missing"), { code: "ENOENT" })));
+          }
+        },
+        write() {},
+        destroy() {},
+      };
+    }
+
+    const socket = new ControlledSocket(endpoint);
+    runtime.sockets.push(socket);
+    return socket;
+  };
+
+  const start = Date.now();
+  const handle = await startSidecar({ rpcTimeoutMs: 50, maxRetries: 2 }, logger, runtime.runtime);
+  const elapsedMs = Date.now() - start;
+
+  assert.equal(runtime.sockets.length, 1);
+  assert.equal(handle.isDegraded(), false);
+  assert.ok(
+    logger.infos.filter((message) => message.includes("Daemon not ready, retrying connection")).length === 2,
+  );
+  assert.deepEqual(
+    logger.infos.filter((message) => message.includes("Daemon not ready, retrying connection")),
+    [
+      "[libravdb] Daemon not ready, retrying connection (attempt 1/5)...",
+      "[libravdb] Daemon not ready, retrying connection (attempt 2/5)...",
+    ],
+  );
+  assert.ok(
+    elapsedMs >= computeStartupConnectRetryDelay(0) + computeStartupConnectRetryDelay(1),
+    `expected retries to wait at least 300ms, got ${elapsedMs}ms`,
   );
 });

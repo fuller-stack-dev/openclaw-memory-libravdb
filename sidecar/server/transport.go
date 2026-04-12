@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 var ErrServerClosed = errors.New("sidecar server closed")
@@ -95,10 +96,13 @@ func Serve(ctx context.Context, listener net.Listener, srv *Server) error {
 func serveConn(ctx context.Context, conn net.Conn, srv *Server) {
 	defer conn.Close()
 
+	var writeMu sync.Mutex
+	var wg sync.WaitGroup
 	reader := bufio.NewReader(conn)
 	for {
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return
 		default:
 		}
@@ -106,8 +110,10 @@ func serveConn(ctx context.Context, conn net.Conn, srv *Server) {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				wg.Wait()
 				return
 			}
+			wg.Wait()
 			return
 		}
 
@@ -118,40 +124,55 @@ func serveConn(ctx context.Context, conn net.Conn, srv *Server) {
 
 		var req request
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
+			writeMu.Lock()
 			_ = writeResponse(conn, response{
 				JSONRPC: "2.0",
 				Error:   &responseError{Message: fmt.Sprintf("invalid request: %v", err)},
 			})
+			writeMu.Unlock()
 			continue
 		}
 
 		var params any
 		if len(req.Params) > 0 {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
+				writeMu.Lock()
 				_ = writeResponse(conn, response{
 					JSONRPC: "2.0",
 					ID:      req.ID,
 					Error:   &responseError{Message: fmt.Sprintf("invalid params: %v", err)},
 				})
+				writeMu.Unlock()
 				continue
 			}
 		}
 
-		result, err := srv.Call(ctx, req.Method, params)
-		if err != nil {
+		// Handle each RPC call concurrently. The plugin sends parallel RPCs
+		// (Promise.all) during assembly. Previously these serialized through a
+		// single goroutine, compounding full-scan latency across 5-8 searches.
+		wg.Add(1)
+		go func(req request, params any) {
+			defer wg.Done()
+			result, err := srv.Call(ctx, req.Method, params)
+
+			writeMu.Lock()
+			defer writeMu.Unlock()
+
+			if err != nil {
+				_ = writeResponse(conn, response{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Error:   &responseError{Message: err.Error()},
+				})
+				return
+			}
+
 			_ = writeResponse(conn, response{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Error:   &responseError{Message: err.Error()},
+				Result:  result,
 			})
-			continue
-		}
-
-		_ = writeResponse(conn, response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  result,
-		})
+		}(req, params)
 	}
 }
 

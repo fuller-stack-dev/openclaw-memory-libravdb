@@ -32,7 +32,7 @@ export default definePluginEntry({
 
     registerMemoryCli(api, runtime, cfg, api.logger ?? console);
     api.registerContextEngine("libravdb-memory", () =>
-      buildContextEngineFactory(runtime.getRpc, cfg, recallCache),
+      buildContextEngineFactory(runtime.getRpc, cfg, recallCache, api.logger ?? console),
     );
     api.registerMemoryPromptSection(buildMemoryPromptSection(runtime.getRpc, cfg, recallCache));
     api.registerMemoryRuntime?.(buildMemoryRuntimeBridge(runtime.getRpc, cfg));

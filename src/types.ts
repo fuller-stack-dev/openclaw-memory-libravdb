@@ -152,6 +152,7 @@ export interface SidecarSocket {
   setEncoding(encoding: string): void;
   on(event: "data", handler: (chunk: string) => void): void;
   on(event: "close", handler: () => void): void;
+  on(event: "error", handler: (error: Error) => void): void;
   once(event: "connect", handler: () => void): void;
   once(event: "error", handler: (error: Error) => void): void;
   write(chunk: string): void;

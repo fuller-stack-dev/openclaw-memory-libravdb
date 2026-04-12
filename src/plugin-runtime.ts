@@ -4,6 +4,7 @@ import type { LoggerLike, PluginConfig, SidecarHandle } from "./types.js";
 
 export type RpcGetter = () => Promise<RpcClient>;
 export const DEFAULT_RPC_TIMEOUT_MS = 30000;
+export const STARTUP_HEALTH_TIMEOUT_MS = 2000;
 
 export interface LifecycleHint {
   hook: "before_reset" | "session_end";
@@ -43,7 +44,9 @@ export function createPluginRuntime(
         const rpc = new RpcClient(sidecar.socket, {
           timeoutMs: cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS,
         });
-        const health = await rpc.call<{ ok?: boolean; message?: string }>("health", {});
+        const health = await rpc.call<{ ok?: boolean; message?: string }>("health", {}, {
+          timeoutMs: STARTUP_HEALTH_TIMEOUT_MS,
+        });
         if (!health.ok) {
           try {
             await sidecar.shutdown();

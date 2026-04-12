@@ -18,20 +18,28 @@ export class RpcClient {
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => this.handleData(chunk));
     socket.on("close", () => this.rejectAll(new Error("Socket closed")));
+    socket.on("error", (error) => this.rejectAll(error));
   }
 
-  async call<T>(method: string, _params: unknown): Promise<T> {
+  async call<T>(method: string, _params: unknown, callOptions: Partial<RpcCallOptions> = {}): Promise<T> {
     return await new Promise<T>((resolve, reject) => {
       const id = ++this.seq;
+      const timeoutMs = callOptions.timeoutMs ?? this.options.timeoutMs;
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`RPC timeout: ${method} (${this.options.timeoutMs}ms)`));
-      }, this.options.timeoutMs);
+        reject(new Error(`RPC timeout: ${method} (${timeoutMs}ms)`));
+      }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
-      this.socket.write(
-        `${JSON.stringify({ jsonrpc: "2.0", id, method, params: _params })}\n`,
-      );
+      try {
+        this.socket.write(
+          `${JSON.stringify({ jsonrpc: "2.0", id, method, params: _params })}\n`,
+        );
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 

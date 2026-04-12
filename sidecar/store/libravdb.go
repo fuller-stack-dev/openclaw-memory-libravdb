@@ -787,21 +787,39 @@ func (s *Store) IncrementAccessCounts(ctx context.Context, collection string, id
 		return nil
 	}
 
-	seen := make(map[string]struct{}, len(ids))
+	// Deduplicate IDs.
+	wanted := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
-		if id == "" {
-			continue
+		if id != "" {
+			wanted[id] = struct{}{}
 		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
 
-		record, err := s.getRecord(ctx, collection, id)
-		if err != nil {
-			return err
+	// Single iterate pass to collect metadata for all matching IDs at once.
+	// This replaces the previous per-ID getRecord approach which did N full
+	// linear scans (one per ID), degrading to O(N*M) on large collections.
+	type match struct {
+		meta map[string]interface{}
+	}
+	found := make(map[string]match, len(wanted))
+	err = col.Iterate(ctx, func(record libravdb.Record) error {
+		if _, ok := wanted[record.ID]; ok {
+			found[record.ID] = match{meta: record.Metadata}
 		}
-		meta := fromStringMap(record.Metadata)
+		if len(found) == len(wanted) {
+			return errStopIter
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStopIter) {
+		return err
+	}
+
+	for id, m := range found {
+		meta := fromStringMap(m.meta)
 		meta["access_count"] = metaInt(meta, "access_count") + 1
 		if err := col.Update(ctx, id, nil, toStringMap(meta)); err != nil {
 			return err
@@ -957,7 +975,7 @@ func (s *Store) searchVec(ctx context.Context, collection string, vec []float32,
 	}
 
 	limit := k
-	if limit <= 0 || len(exclude) > 0 {
+	if limit <= 0 {
 		count, err := col.Count(ctx)
 		if err != nil {
 			return nil, err
@@ -966,6 +984,12 @@ func (s *Store) searchVec(ctx context.Context, collection string, vec []float32,
 			return []SearchResult{}, nil
 		}
 		limit = count
+	} else if len(exclude) > 0 {
+		// Over-fetch by the number of excluded IDs so we still return k results
+		// after filtering. This avoids the previous behaviour of scanning the
+		// entire collection (limit = count) which degraded to O(N) on large
+		// production datasets.
+		limit = k + len(exclude)
 	}
 
 	results, err := col.Search(ctx, cloneVector(vec), limit)

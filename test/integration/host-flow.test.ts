@@ -1,13 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildContextEngineFactory } from "../../src/context-engine.js";
+import { buildContextEngineFactory as createContextEngineFactory } from "../../src/context-engine.js";
 import { resolveDurableNamespace } from "../../src/durable-namespace.js";
 import { acquireTestDaemonHandle } from "./daemon-harness.js";
 import { buildMemoryPromptSection } from "../../src/memory-provider.js";
 import { createPluginRuntime } from "../../src/plugin-runtime.js";
 import { createRecallCache } from "../../src/recall-cache.js";
-import type { PluginConfig, SearchResult } from "../../src/types.js";
+import { createMemoryLogger } from "../helpers/logger.js";
+import type { LoggerLike, PluginConfig, SearchResult } from "../../src/types.js";
+
+const NOOP_LOGGER: LoggerLike = {
+  error() {},
+  info() {},
+  warn() {},
+};
+
+function buildContextEngineFactory(
+  getRpc: Parameters<typeof createContextEngineFactory>[0],
+  cfg: Parameters<typeof createContextEngineFactory>[1],
+  recallCache: Parameters<typeof createContextEngineFactory>[2],
+  logger: LoggerLike = NOOP_LOGGER,
+) {
+  return createContextEngineFactory(getRpc, cfg, recallCache, logger);
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -943,6 +959,7 @@ test("assemble preserves original host-visible messages even when retrieval norm
 });
 
 test("ingest reports failure when raw session storage fails", async () => {
+  const logger = createMemoryLogger();
   const rpc = {
     async call<T>(method: string): Promise<T> {
       switch (method) {
@@ -958,7 +975,7 @@ test("ingest reports failure when raw session storage fails", async () => {
     },
   };
   const recallCache = createRecallCache<SearchResult>();
-  const context = buildContextEngineFactory(async () => rpc as never, { topK: 8 }, recallCache);
+  const context = buildContextEngineFactory(async () => rpc as never, { topK: 8 }, recallCache, logger);
 
   await context.bootstrap({ sessionId: "s1", userId: "u1" });
   const result = await context.ingest({
@@ -968,6 +985,7 @@ test("ingest reports failure when raw session storage fails", async () => {
   });
 
   assert.deepEqual(result, { ingested: false });
+  assert.ok(logger.errors.some((message) => message.includes("session ingest failed for s1: session insert failed")));
 });
 
 test("real sidecar mid-sized session search benchmark", async (t) => {
@@ -978,11 +996,7 @@ test("real sidecar mid-sized session search benchmark", async (t) => {
 
   const daemon = await acquireTestDaemonHandle();
 
-  const logger = {
-    error() {},
-    info() {},
-    warn() {},
-  };
+  const logger = NOOP_LOGGER;
 
   try {
     async function runScenario(label: string, overrides: Partial<PluginConfig>) {
@@ -1254,7 +1268,7 @@ test("assemble respects the total token budget under the continuity partition", 
   assert.ok(assembled.estimatedTokens <= 40, `estimatedTokens=${assembled.estimatedTokens}`);
 });
 
-test("ingest skips durable user insert when gating score is below threshold", async () => {
+test("ingest still promotes durable user memory when gating score is below threshold", async () => {
   const rpc = new FakeRpc();
   rpc.gatingResult = { ...rpc.gatingResult, g: 0.2 };
   const recallCache = createRecallCache<SearchResult>();
@@ -1275,7 +1289,42 @@ test("ingest skips durable user insert when gating score is below threshold", as
 
   assert.ok(rpc.inserted.some((item) => item.collection === "session:s1"));
   assert.ok(rpc.inserted.some((item) => item.collection === "turns:u1"));
+  assert.ok(rpc.inserted.some((item) => item.collection === "user:u1"));
+});
+
+test("ingest reports failure when durable user promotion fails", async () => {
+  const logger = createMemoryLogger();
+  const rpc = new FakeRpc();
+  rpc.gatingResult = { ...rpc.gatingResult, g: 0.2 };
+  const originalCall = rpc.call.bind(rpc);
+  rpc.call = async function<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    if (method === "insert_text" && String(params.collection) === "user:u1") {
+      throw new Error("durable insert failed");
+    }
+    return await originalCall(method, params);
+  };
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    ingestionGateThreshold: 0.35,
+  };
+
+  const getRpc = async () => rpc as never;
+  const context = buildContextEngineFactory(getRpc, cfg, recallCache, logger);
+
+  await context.bootstrap({ sessionId: "s1", userId: "u1" });
+  const result = await context.ingest({
+    sessionId: "s1",
+    userId: "u1",
+    message: { role: "user", content: "low value chatter" },
+  });
+
+  assert.deepEqual(result, { ingested: false });
+  assert.ok(rpc.inserted.some((item) => item.collection === "session:s1"));
+  assert.ok(rpc.inserted.some((item) => item.collection === "turns:u1"));
   assert.ok(!rpc.inserted.some((item) => item.collection === "user:u1"));
+  assert.ok(logger.errors.some((message) => message.includes("durable user insert failed for u1: durable insert failed")));
 });
 
 test("assemble recovers exact historical user turns from turns:user when the query session is fresh", async () => {
@@ -1302,7 +1351,7 @@ test("assemble recovers exact historical user turns from turns:user when the que
     },
   });
 
-  assert.equal((rpc.collections.get("user:u1") ?? []).length, 0, "durable user memory should stay empty for this low-gate turn");
+  assert.equal((rpc.collections.get("user:u1") ?? []).length, 1, "durable user memory should be promoted for this turn");
   assert.equal((rpc.collections.get("turns:u1") ?? []).length, 1, "raw per-user turn index should capture the turn");
 
   await context.bootstrap({ sessionId: "fresh", userId: "u1" });

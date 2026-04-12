@@ -10,7 +10,13 @@ import { estimateTokens } from "../../src/tokens.js";
 import { probeSidecarEndpoint } from "../../src/sidecar.js";
 import { acquireTestDaemonHandle } from "./daemon-harness.js";
 import type { TestDaemonHandle } from "./daemon-harness.js";
-import type { PluginConfig, SearchResult } from "../../src/types.js";
+import type { LoggerLike, PluginConfig, SearchResult } from "../../src/types.js";
+
+const NOOP_LOGGER: LoggerLike = {
+  error() {},
+  info() {},
+  warn() {},
+};
 
 type LongMemEvalTurn = {
   role: string;
@@ -184,8 +190,8 @@ async function createBenchmarkStack(cfgBase: Omit<PluginConfig, "sidecarPath">, 
     ...cfgBase,
     sidecarPath: daemon.endpoint,
   };
-  const runtime = createPluginRuntime(cfg, console);
-  const context = buildContextEngineFactory(runtime.getRpc, cfg, createRecallCache<SearchResult>());
+  const runtime = createPluginRuntime(cfg, NOOP_LOGGER);
+  const context = buildContextEngineFactory(runtime.getRpc, cfg, createRecallCache<SearchResult>(), NOOP_LOGGER);
   return { daemon, runtime, context };
 }
 

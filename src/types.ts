@@ -226,6 +226,31 @@ export interface ContextAssembleResult {
       recencyScore: number;
       finalScore: number;
       rationale: string;
+      comparisonSide?: 0 | 1 | null;
+      comparisonSlot?: string;
+      comparisonSlotRecall?: number;
+      comparisonSlotPrecision?: number;
+      comparisonSlotSpecificity?: number;
+      comparisonSlotPositionWeightedRecall?: number;
+      comparisonSlotPositionWeightedPrecision?: number;
+      comparisonSlotPositionWeightedSpecificity?: number;
+      comparisonFirstPersonClauseCount?: number;
+      comparisonProspectivePersonalVerbCount?: number;
+      comparisonPlanningDensity?: number;
+      comparisonPastness?: number;
+      comparisonSideWitnessScore?: number;
+    }>;
+    recoveryDedupedOrder?: Array<{
+      id: string;
+      recoveryScope: string;
+      finalScore: number;
+      tokenEstimate: number;
+    }>;
+    recoveryFittedOrder?: Array<{
+      id: string;
+      recoveryScope: string;
+      finalScore: number;
+      tokenEstimate: number;
     }>;
     recoveryReserveTokens?: number;
     temporalQueryIndicator?: number;
@@ -234,6 +259,9 @@ export interface ContextAssembleResult {
     temporalSelectorApplied?: boolean;
     temporalSelectorReason?: string;
     temporalRecoverySlots?: string[];
+    temporalComparisonCoverageApplied?: boolean;
+    temporalComparisonCoverageSlots?: string[];
+    temporalComparisonCoverageMinTokens?: number;
   };
 }
 

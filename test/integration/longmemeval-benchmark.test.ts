@@ -58,10 +58,38 @@ type BenchmarkRecord = {
     selected: boolean;
     tokenEstimate: number;
     semanticScore: number;
+    temporalAnchorDensity?: number;
+    slotCoverage?: number;
+    slotMatches?: string[];
     lexicalCoverage: number;
     recencyScore: number;
     finalScore: number;
     rationale: string;
+    comparisonSide?: 0 | 1 | null;
+    comparisonSlot?: string;
+    comparisonSlotRecall?: number;
+    comparisonSlotPrecision?: number;
+    comparisonSlotSpecificity?: number;
+    comparisonSlotPositionWeightedRecall?: number;
+    comparisonSlotPositionWeightedPrecision?: number;
+    comparisonSlotPositionWeightedSpecificity?: number;
+    comparisonFirstPersonClauseCount?: number;
+    comparisonProspectivePersonalVerbCount?: number;
+    comparisonPlanningDensity?: number;
+    comparisonPastness?: number;
+    comparisonSideWitnessScore?: number;
+  }>;
+  recovery_deduped_order?: Array<{
+    id: string;
+    recoveryScope: string;
+    finalScore: number;
+    tokenEstimate: number;
+  }>;
+  recovery_fitted_order?: Array<{
+    id: string;
+    recoveryScope: string;
+    finalScore: number;
+    tokenEstimate: number;
   }>;
   error?: string;
 };
@@ -272,6 +300,8 @@ async function runInstance({
     temporal_query_patterns: assembled._debug?.temporalQueryPatterns,
     temporal_recovery_slots: assembled._debug?.temporalRecoverySlots,
     raw_user_recovery_candidates: assembled._debug?.rawUserRecoveryCandidates,
+    recovery_deduped_order: assembled._debug?.recoveryDedupedOrder,
+    recovery_fitted_order: assembled._debug?.recoveryFittedOrder,
   };
 }
 
@@ -300,6 +330,8 @@ function errorRecord(instance: LongMemEvalInstance, error: unknown): BenchmarkRe
     temporal_query_patterns: undefined,
     temporal_recovery_slots: undefined,
     raw_user_recovery_candidates: [],
+    recovery_deduped_order: [],
+    recovery_fitted_order: [],
     error: error instanceof Error ? error.message : String(error),
   };
 }

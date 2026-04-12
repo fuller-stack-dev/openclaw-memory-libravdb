@@ -334,8 +334,10 @@ export function rankRawUserRecoveryCandidates(
       );
       const intentAlignmentBonus = computeIntentAlignmentBonus(item.text, intentPhrases);
       const finalScore = clamp01(
-        (0.30 * semanticScore) +
-        (0.60 * lexicalCoverage) +
+        // Raw recovery is a precision-sensitive fallback: exact-turn recall is
+        // usually better served by lexical overlap than by broad semantic drift.
+        (0.20 * semanticScore) +
+        (0.70 * lexicalCoverage) +
         (0.10 * recencyScore) +
         intentAlignmentBonus,
       );
@@ -515,7 +517,8 @@ function computeIntentAlignmentBonus(text: string, intentPhrases: string[]): num
   if (matched === 0) {
     return 0;
   }
-  return Math.min(0.08, matched * 0.02);
+  // Keep this a small nudge so phrase overlap cannot overwhelm lexical precision.
+  return Math.min(0.04, matched * 0.01);
 }
 
 function extractIntentPhrases(text: string): string[] {

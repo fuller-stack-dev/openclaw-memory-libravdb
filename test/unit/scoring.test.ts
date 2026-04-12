@@ -569,3 +569,28 @@ test("rankRawUserRecoveryCandidates favors tighter lexical match over broader to
   assert.ok((debug[0]?.lexicalCoverage ?? 0) > (debug[1]?.lexicalCoverage ?? 0));
   assert.match(debug[0]?.rationale ?? "", /intent phrase overlap|lexical coverage/);
 });
+
+test("rankRawUserRecoveryCandidates prefers the more specific turn in a first-or-earlier comparison", () => {
+  const now = Date.now();
+  const { ranked, debug } = rankRawUserRecoveryCandidates([
+    {
+      id: "broad-network",
+      score: 0.3885394334793091,
+      text: "I'm thinking of spending around $800 to $1,200 for the desktop. I'm not really sure about the specific components yet, but I do know that I want to make sure it can handle my internet connection well, since I just upgraded to a mesh network system. Can you help me figure out what components would be good for that?",
+      metadata: { ts: now - 8_000, userId: "u1" },
+    },
+    {
+      id: "specific-thermostat",
+      score: 0.25500428676605225,
+      text: "I'm not really sure about building my own computer, I think I'll stick with a pre-built one. I've been looking at some models from Dell and HP. As for video editing, I just use iMovie and Adobe Premiere Elements, nothing too advanced. Also, since I set up my smart thermostat a month ago, I've noticed that it's been learning my schedule and preferences, and automatically adjusts the temperature when I'm not home or when I'm sleeping, which has been really helpful in reducing my energy bills.",
+      metadata: { ts: now - 4_000, userId: "u1" },
+    },
+  ], {
+    queryText: "Which device did I set up first, the smart thermostat or the mesh network system?",
+    nowMs: now,
+  });
+
+  assert.equal(ranked[0]?.id, "specific-thermostat");
+  assert.equal(debug[0]?.id, "specific-thermostat");
+  assert.ok((ranked[0]?.finalScore ?? 0) > (ranked[1]?.finalScore ?? 0));
+});

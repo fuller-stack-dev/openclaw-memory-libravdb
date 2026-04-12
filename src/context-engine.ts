@@ -602,9 +602,14 @@ export function buildContextEngineFactory(
       const crossSessionRawRecovery = !dreamMode &&
         rawSessionTurns.length === 0 &&
         sessionHits.results.length === 0;
-      const recoveryReserveTokens = (recoveryTrigger.fire || crossSessionRawRecovery)
+      const baseRecoveryReserveTokens = (recoveryTrigger.fire || crossSessionRawRecovery)
         ? Math.min(memoryBudget, Math.max(Math.floor(memoryBudget * 0.10), 16), 128)
         : 0;
+      const isComparisonTemporalRecovery = temporalSelectorGuard.shouldApply &&
+        temporalQuery.matchedPatterns.includes("first or earlier");
+      const recoveryReserveTokens = isComparisonTemporalRecovery && baseRecoveryReserveTokens > 0
+        ? Math.min(memoryBudget, Math.max(baseRecoveryReserveTokens, Math.ceil(baseRecoveryReserveTokens * 1.6)))
+        : baseRecoveryReserveTokens;
       const elevatedGuidanceBudget = Math.max(
         0,
         Math.min(
@@ -639,6 +644,8 @@ export function buildContextEngineFactory(
       // it never modifies the C_total(q) output and does not spend from tau_V.
       let recoveryItems: SearchResult[] = [];
       let rawUserRecoveryDebug: NonNullable<NonNullable<ContextAssembleResult["_debug"]>["rawUserRecoveryCandidates"]> = [];
+      let dedupedRecoveryDebug: NonNullable<NonNullable<ContextAssembleResult["_debug"]>["recoveryDedupedOrder"]> = [];
+      let fittedRecoveryDebug: NonNullable<NonNullable<ContextAssembleResult["_debug"]>["recoveryFittedOrder"]> = [];
       let temporalRecoveryResult: TemporalRecoveryRankingResult | null = null;
       if (!dreamMode && (recoveryTrigger.fire || crossSessionRawRecovery)) {
         profiler?.mark("recovery_expand");
@@ -684,6 +691,7 @@ export function buildContextEngineFactory(
                 maxSelected: 3,
                 nowMs: Date.now(),
                 recencyLambda: cfg.recencyLambdaUser ?? 0.00001,
+                selectionTokenBudget: recoveryReserveTokens,
               })
             : null;
           const reranked = temporalRecoveryResult
@@ -715,26 +723,82 @@ export function buildContextEngineFactory(
                 : 0,
               finalScore: typeof item.finalScore === "number" ? item.finalScore : 0,
               rationale: typeof item.rationale === "string" ? item.rationale : "",
+              comparisonSide: "comparisonSide" in item && (item.comparisonSide === 0 || item.comparisonSide === 1 || item.comparisonSide === null)
+                ? item.comparisonSide
+                : undefined,
+              comparisonSlot: "comparisonSlot" in item && typeof item.comparisonSlot === "string"
+                ? item.comparisonSlot
+                : undefined,
+              comparisonSlotRecall: "comparisonSlotRecall" in item && typeof item.comparisonSlotRecall === "number"
+                ? item.comparisonSlotRecall
+                : undefined,
+              comparisonSlotPrecision: "comparisonSlotPrecision" in item && typeof item.comparisonSlotPrecision === "number"
+                ? item.comparisonSlotPrecision
+                : undefined,
+              comparisonSlotSpecificity: "comparisonSlotSpecificity" in item && typeof item.comparisonSlotSpecificity === "number"
+                ? item.comparisonSlotSpecificity
+                : undefined,
+              comparisonSlotPositionWeightedRecall: "comparisonSlotPositionWeightedRecall" in item && typeof item.comparisonSlotPositionWeightedRecall === "number"
+                ? item.comparisonSlotPositionWeightedRecall
+                : undefined,
+              comparisonSlotPositionWeightedPrecision: "comparisonSlotPositionWeightedPrecision" in item && typeof item.comparisonSlotPositionWeightedPrecision === "number"
+                ? item.comparisonSlotPositionWeightedPrecision
+                : undefined,
+              comparisonSlotPositionWeightedSpecificity: "comparisonSlotPositionWeightedSpecificity" in item && typeof item.comparisonSlotPositionWeightedSpecificity === "number"
+                ? item.comparisonSlotPositionWeightedSpecificity
+                : undefined,
+              comparisonFirstPersonClauseCount: "comparisonFirstPersonClauseCount" in item && typeof item.comparisonFirstPersonClauseCount === "number"
+                ? item.comparisonFirstPersonClauseCount
+                : undefined,
+              comparisonProspectivePersonalVerbCount: "comparisonProspectivePersonalVerbCount" in item && typeof item.comparisonProspectivePersonalVerbCount === "number"
+                ? item.comparisonProspectivePersonalVerbCount
+                : undefined,
+              comparisonPlanningDensity: "comparisonPlanningDensity" in item && typeof item.comparisonPlanningDensity === "number"
+                ? item.comparisonPlanningDensity
+                : undefined,
+              comparisonPastness: "comparisonPastness" in item && typeof item.comparisonPastness === "number"
+                ? item.comparisonPastness
+                : undefined,
+              comparisonSideWitnessScore: "comparisonSideWitnessScore" in item && typeof item.comparisonSideWitnessScore === "number"
+                ? item.comparisonSideWitnessScore
+                : undefined,
             }));
           }
           recoveryCandidates.push(
-            ...reranked.ranked.map((item) => ({
-              ...item,
-              finalScore: typeof item.finalScore === "number" ? item.finalScore : item.score,
-              metadata: {
-                ...item.metadata,
-                recovery_fallback: true,
-                recovery_scope: "user_turns",
-              },
-            })),
+            ...reranked.ranked.map((item) => {
+              return {
+                ...item,
+                finalScore: typeof item.finalScore === "number" ? item.finalScore : item.score,
+                metadata: {
+                  ...item.metadata,
+                  recovery_fallback: true,
+                  recovery_scope: "user_turns",
+                },
+              };
+            }),
           );
         }
 
+        const dedupedRecovery = dedupeRecoveryCandidates(recoveryCandidates);
         const fittedRecovery = fitPromptBudgetFirstFit(
-          dedupeRecoveryCandidates(recoveryCandidates),
+          dedupedRecovery,
           recoveryReserveTokens,
         );
         recoveryItems = fittedRecovery;
+        if (debugRecovery) {
+          dedupedRecoveryDebug = dedupedRecovery.map((item) => ({
+            id: item.id,
+            recoveryScope: typeof item.metadata.recovery_scope === "string" ? item.metadata.recovery_scope : "unknown",
+            finalScore: typeof item.finalScore === "number" ? item.finalScore : item.score,
+            tokenEstimate: estimateTokens(item.text),
+          }));
+          fittedRecoveryDebug = fittedRecovery.map((item) => ({
+            id: item.id,
+            recoveryScope: typeof item.metadata.recovery_scope === "string" ? item.metadata.recovery_scope : "unknown",
+            finalScore: typeof item.finalScore === "number" ? item.finalScore : item.score,
+            tokenEstimate: estimateTokens(item.text),
+          }));
+        }
         if (debugRecovery && rawUserRecoveryDebug.length > 0) {
           const selectedIDs = new Set(
             fittedRecovery
@@ -782,6 +846,11 @@ export function buildContextEngineFactory(
               temporalSelectorApplied: temporalSelectorGuard.shouldApply,
               temporalSelectorReason: temporalSelectorGuard.reason,
               temporalRecoverySlots: temporalRecoveryResult?.slots,
+              temporalComparisonCoverageApplied: temporalRecoveryResult?.comparisonCoverageApplied,
+              temporalComparisonCoverageSlots: temporalRecoveryResult?.comparisonCoverageSlots,
+              temporalComparisonCoverageMinTokens: temporalRecoveryResult?.comparisonCoverageMinTokens,
+              recoveryDedupedOrder: dedupedRecoveryDebug,
+              recoveryFittedOrder: fittedRecoveryDebug,
               rawUserRecoveryCandidates: rawUserRecoveryDebug,
             }
           : undefined,

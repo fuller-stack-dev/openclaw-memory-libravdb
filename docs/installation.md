@@ -120,13 +120,24 @@ extractive compaction. The only optional runtime network path is:
 ### Fastest Path on macOS
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
-brew install libravdbd
-brew services start libravdbd
-openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+curl -fsSL https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/install.sh | bash
 ```
 
-This is the preferred install flow for macOS users. It gives you a managed `libravdbd` service and a scanner-clean OpenClaw plugin package.
+Prerequisites: Homebrew and the `openclaw` CLI must already be installed and on
+your `PATH`.
+
+This bootstrap path installs the published Homebrew formula, starts the managed
+`libravdbd` service, installs the scanner-clean OpenClaw plugin package, and
+restarts the gateway when it is already running.
+
+Manual equivalent:
+
+```bash
+brew install xDarkicex/openclaw-libravdb-memory/libravdbd
+brew services start libravdbd
+openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+openclaw gateway restart
+```
 
 ### Plugin Package
 
@@ -171,8 +182,7 @@ openclaw memory status
 Homebrew users should normally install from the published tap:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
-brew install libravdbd
+brew install xDarkicex/openclaw-libravdb-memory/libravdbd
 brew services start libravdbd
 ```
 
@@ -220,9 +230,16 @@ Installed plugin: libravdb-memory
 
 ## Activation
 
-The plugin declares `kind: ["memory", "context-engine"]` and is intended to own both the `memory` and `contextEngine` slots together. Treat partial slot assignment as a misconfiguration.
+The plugin declares `kind: ["memory", "context-engine"]` and is intended to
+own both the `memory` and `contextEngine` slots together. Treat partial slot
+assignment as a misconfiguration.
 
-Add this to `~/.openclaw/openclaw.json`:
+On current supported OpenClaw builds,
+`openclaw plugins install @xdarkicex/openclaw-memory-libravdb` auto-selects
+both slots.
+
+If you need to repair stale config or are activating the plugin through a UI
+flow that does not assign slots automatically, set:
 
 ```json
 {

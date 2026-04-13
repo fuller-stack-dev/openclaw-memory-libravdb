@@ -62,35 +62,39 @@ These are the core differentiators the project is built around:
 
 ## Quick Start
 
-The supported install flow is:
+The shortest supported setup is a single bootstrap command:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
-brew install libravdbd
+curl -fsSL https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/install.sh | bash
+```
+
+Prerequisites: Homebrew and the `openclaw` CLI must already be installed and on
+your `PATH`.
+
+That script:
+
+- installs `libravdbd` from the published Homebrew tap
+- starts the managed `libravdbd` service
+- installs `@xdarkicex/openclaw-memory-libravdb`
+- restarts the OpenClaw gateway when it is already running
+
+If you prefer to run the steps yourself, the manual equivalent is:
+
+```bash
+brew install xDarkicex/openclaw-libravdb-memory/libravdbd
 brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+openclaw gateway restart
 ```
 
-The Homebrew formula installs the daemon plus the bundled ONNX Runtime, embedding assets, and T5 summarizer assets it needs to boot cleanly on supported platforms.
+On current supported OpenClaw builds, `openclaw plugins install` auto-selects
+both required slots for this dual-kind plugin. You only need manual
+`plugins.configs.libravdb-memory.sidecarPath` config when you run the daemon on
+a non-default endpoint.
 
-Then assign the plugin to both required OpenClaw slots in
-`~/.openclaw/openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "libravdb-memory",
-      "contextEngine": "libravdb-memory"
-    },
-    "configs": {
-      "libravdb-memory": {
-        "sidecarPath": "auto"
-      }
-    }
-  }
-}
-```
+The Homebrew formula installs the daemon plus the bundled ONNX Runtime,
+embedding assets, and T5 summarizer assets it needs to boot cleanly on
+supported platforms.
 
 Verify the setup:
 

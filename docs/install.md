@@ -7,15 +7,28 @@ daemon endpoint when you need a non-default location.
 For deeper operational detail, use the full
 [installation reference](./installation.md).
 
-## Recommended Path: Homebrew + OpenClaw Plugin
+## Recommended Path: One-Liner Bootstrap
 
 On macOS, the shortest supported path is:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
-brew install libravdbd
+curl -fsSL https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/install.sh | bash
+```
+
+Prerequisites: Homebrew and the `openclaw` CLI must already be installed and on
+your `PATH`.
+
+That bootstrap script installs the published Homebrew formula, starts the
+managed `libravdbd` service, installs the OpenClaw plugin, and restarts the
+gateway when it is already running.
+
+If you prefer the explicit commands, the equivalent manual flow is:
+
+```bash
+brew install xDarkicex/openclaw-libravdb-memory/libravdbd
 brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+openclaw gateway restart
 ```
 
 This gives you:
@@ -32,22 +45,12 @@ Install the plugin package with the OpenClaw CLI:
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
-If you use the OpenClaw.ai plugin UI instead of the CLI, install the same
-package and then assign the plugin id `libravdb-memory` to both the `memory`
-and `contextEngine` slots.
+On current supported OpenClaw builds, the CLI install path auto-selects the
+plugin for both required slots because the manifest declares
+`kind: ["memory", "context-engine"]`.
 
-Activate the plugin in `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "libravdb-memory",
-      "contextEngine": "libravdb-memory"
-    }
-  }
-}
-```
+If you use the OpenClaw.ai plugin UI instead of the CLI, confirm that the
+plugin id `libravdb-memory` owns both the `memory` and `contextEngine` slots.
 
 If you run the daemon on a non-default endpoint, add a plugin config:
 
@@ -85,8 +88,7 @@ Default data path:
 Homebrew is the preferred daemon lifecycle on macOS:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
-brew install libravdbd
+brew install xDarkicex/openclaw-libravdb-memory/libravdbd
 brew services start libravdbd
 ```
 

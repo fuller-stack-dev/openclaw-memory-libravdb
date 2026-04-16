@@ -1,6 +1,8 @@
 import { RpcClient } from "./rpc.js";
+import { GrpcKernelClient } from "./grpc-client.js";
 import { daemonProvisioningHint, startSidecar } from "./sidecar.js";
 import type { LoggerLike, PluginConfig, SidecarHandle } from "./types.js";
+import { readFileSync } from "node:fs";
 
 export type RpcGetter = () => Promise<RpcClient>;
 export const DEFAULT_RPC_TIMEOUT_MS = 30000;
@@ -23,6 +25,7 @@ export interface LifecycleHint {
 
 export interface PluginRuntime {
   getRpc: RpcGetter;
+  getKernel(): GrpcKernelClient | null;
   emitLifecycleHint(hint: LifecycleHint): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -31,8 +34,9 @@ export function createPluginRuntime(
   cfg: PluginConfig,
   logger: LoggerLike = console,
 ): PluginRuntime {
-  let started: Promise<{ rpc: RpcClient; sidecar: SidecarHandle }> | null = null;
+  let started: Promise<{ rpc: RpcClient; sidecar: SidecarHandle; kernel: GrpcKernelClient | null }> | null = null;
   let stopped = false;
+  let resolvedKernel: GrpcKernelClient | null = null;
 
   const ensureStarted = async () => {
     if (stopped) {
@@ -55,7 +59,22 @@ export function createPluginRuntime(
           }
           throw enrichStartupError("LibraVDB daemon failed health check", health.message);
         }
-        return { rpc, sidecar };
+        let kernel: GrpcKernelClient | null = null;
+        if (cfg.grpcEndpoint) {
+          try {
+            const secret = loadSecretFromEnv();
+            kernel = new GrpcKernelClient({
+              endpoint: cfg.grpcEndpoint,
+              secret,
+              timeoutMs: cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS,
+            });
+          } catch (error) {
+            logger.warn?.(`LibraVDB: failed to initialize gRPC kernel client: ${formatError(error)}`);
+          }
+        }
+
+        resolvedKernel = kernel;
+        return { rpc, sidecar, kernel };
       })().catch((error) => {
         started = null;
         throw enrichStartupError(error);
@@ -67,6 +86,10 @@ export function createPluginRuntime(
   return {
     async getRpc() {
       return (await ensureStarted()).rpc;
+    },
+    getKernel() {
+      if (!started) return null;
+      return resolvedKernel;
     },
     async emitLifecycleHint(hint: LifecycleHint) {
       try {
@@ -83,14 +106,29 @@ export function createPluginRuntime(
       }
       const active = started;
       started = null;
-      const { rpc, sidecar } = await active;
+      const { rpc, sidecar, kernel } = await active;
       try {
+        if (kernel) kernel.close();
         await rpc.call("flush", {});
       } finally {
         await sidecar.shutdown();
       }
     },
   };
+}
+
+function loadSecretFromEnv(): string | undefined {
+  const secret = process.env.LIBRAVDB_AUTH_SECRET;
+  if (secret) return secret;
+  const path = process.env.LIBRAVDB_AUTH_SECRET_FILE;
+  if (path) {
+    try {
+      return readFileSync(path, "utf8").trim();
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function formatError(error: unknown): string {

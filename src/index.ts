@@ -14,7 +14,7 @@ export default definePluginEntry({
   id: "libravdb-memory",
   name: "LibraVDB Memory",
   description: "Persistent vector memory with three-tier hybrid scoring",
-  kind: ["memory", "context-engine"],
+  kind: "context-engine",
 
   register(api: OpenClawPluginApi) {
     const cfg = api.pluginConfig as PluginConfig;
@@ -32,7 +32,7 @@ export default definePluginEntry({
 
     registerMemoryCli(api, runtime, cfg, api.logger ?? console);
     api.registerContextEngine("libravdb-memory", () =>
-      buildContextEngineFactory(runtime.getRpc, cfg, recallCache, api.logger ?? console),
+      buildContextEngineFactory(runtime, cfg, recallCache, api.logger ?? console),
     );
     api.registerMemoryPromptSection(buildMemoryPromptSection(runtime.getRpc, cfg, recallCache));
     api.registerMemoryRuntime?.(buildMemoryRuntimeBridge(runtime.getRpc, cfg));

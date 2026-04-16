@@ -27,6 +27,6 @@ test("buildDaemonReleaseAssetURL uses tagged release assets", async () => {
 
   assert.equal(
     buildDaemonReleaseAssetURL("1.3.0", "libravdbd-linux-amd64"),
-    "https://github.com/xDarkicex/openclaw-memory-libravdb/releases/download/v1.3.0/libravdbd-linux-amd64",
+    "https://github.com/xDarkicex/libravdbd/releases/download/v1.3.0/libravdbd-linux-amd64",
   );
 });

@@ -4,7 +4,9 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
-    "noEmit": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src",
     "types": ["node"],
     "typeRoots": ["./.ts-toolchain/node_modules/@types"],
     "skipLibCheck": true,
@@ -16,10 +18,5 @@
       "@xdarkicex/libravdb-contracts/*": ["src/generated/*"]
     }
   },
-  "include": [
-    "src/**/*.ts",
-    "scripts/**/*.ts",
-    "scripts/**/*.js",
-    "test/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }

@@ -5,6 +5,7 @@
 .sidecar-bin/
 .daemon-bin/
 .ts-build/
+dist/
 .ts-toolchain/
 /sidecar/sidecar
 
@@ -21,3 +22,12 @@ node_modules/
 .DS_Store
 benchmarks/longmemeval/
 internal-docs/
+phasing_port.md
+port_plan.md
+back_up_src_plugin
+.perl5.bak
+scratch/
+bootstrap-perl.sh
+cpanfile
+pnpm-lock.yaml
+.claude/

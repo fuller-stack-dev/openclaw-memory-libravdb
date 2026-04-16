@@ -134,7 +134,7 @@ This is the preferred install flow for macOS users. It gives you a managed `libr
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
-The plugin package installs as normal OpenClaw source without daemon bootstrap hooks.
+The plugin package installs as compiled OpenClaw runtime code without daemon bootstrap hooks.
 
 ## Daemon Install
 
@@ -153,9 +153,9 @@ Recommended layout:
 
 ```bash
 mkdir -p ~/.local/bin ~/.config/systemd/user
-curl -L -o ~/.local/bin/libravdbd https://github.com/xDarkicex/openclaw-memory-libravdb/releases/download/vX.Y.Z/libravdbd-linux-amd64
+curl -L -o ~/.local/bin/libravdbd <published-libravdbd-binary-url>
 chmod +x ~/.local/bin/libravdbd
-cp packaging/systemd/libravdbd.service ~/.config/systemd/user/libravdbd.service
+cp <published-libravdbd-service-template> ~/.config/systemd/user/libravdbd.service
 systemctl --user enable --now libravdbd.service
 ```
 
@@ -176,7 +176,7 @@ brew install libravdbd
 brew services start libravdbd
 ```
 
-The release workflow generates a publish-ready `libravdbd.rb` formula asset from [`packaging/homebrew/libravdbd.rb.tmpl`](../packaging/homebrew/libravdbd.rb.tmpl). It is designed for GitHub release assets named:
+The daemon release pipeline generates a publish-ready `libravdbd.rb` formula asset for release assets named:
 
 - `libravdbd-darwin-arm64`
 - `libravdbd-darwin-amd64`
@@ -220,7 +220,7 @@ Installed plugin: libravdb-memory
 
 ## Activation
 
-The plugin declares `kind: ["memory", "context-engine"]` and is intended to own both the `memory` and `contextEngine` slots together. Treat partial slot assignment as a misconfiguration.
+The manifest declares `kind: "context-engine"` and the runtime registers the memory prompt and memory runtime surfaces in code. It is still intended to own both the `memory` and `contextEngine` slots together. Treat partial slot assignment as a misconfiguration.
 
 Add this to `~/.openclaw/openclaw.json`:
 
@@ -281,30 +281,38 @@ For contributors working from a clone:
 
 ```bash
 pnpm check
-cd sidecar && env GOCACHE=/tmp/openclaw-memory-libravdb-gocache go test -race ./... && cd ..
 bash scripts/build-daemon.sh
 ```
 
-This produces a local daemon binary in `.daemon-bin/libravdbd` (or `.exe` on Windows) and copies any locally available model/runtime assets there for testing.
+This prepares a local daemon binary in `.daemon-bin/libravdbd` (or `.exe` on Windows) and copies any locally available model/runtime assets there for testing.
+
+Contributor default:
+
+- install `libravdbd` separately with Homebrew or release assets, then run `bash scripts/build-daemon.sh`
+
+Private local daemon development:
+
+- set `LIBRAVDBD_SOURCE_DIR=/path/to/libravdbd` to build from your local daemon repo
+- or set `LIBRAVDBD_BINARY_PATH=/path/to/libravdbd` to use a prebuilt local daemon binary
 
 ## User-Service Templates
 
-Phase 2 packaging assets are included in-repo:
+Published daemon installs include matching user-service templates:
 
-- Linux user service: [`packaging/systemd/libravdbd.service`](../packaging/systemd/libravdbd.service)
-- macOS LaunchAgent: [`packaging/launchd/com.xdarkicex.libravdbd.plist`](../packaging/launchd/com.xdarkicex.libravdbd.plist)
+- Linux user service: `libravdbd.service`
+- macOS LaunchAgent: `com.xdarkicex.libravdbd.plist`
 
 Linux example:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp packaging/systemd/libravdbd.service ~/.config/systemd/user/libravdbd.service
+cp <published-libravdbd-service-template> ~/.config/systemd/user/libravdbd.service
 systemctl --user enable --now libravdbd.service
 ```
 
 macOS example:
 
-1. Copy `packaging/launchd/com.xdarkicex.libravdbd.plist`
+1. Copy the published `com.xdarkicex.libravdbd.plist`
 2. Replace `__LIBRAVDBD_PATH__` and `__HOME__`
 3. Save it to `~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`
 4. Load it with `launchctl load ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`

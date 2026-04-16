@@ -2,28 +2,42 @@
   "name": "@xdarkicex/openclaw-memory-libravdb",
   "version": "1.4.6",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./openclaw.plugin.json": "./openclaw.plugin.json",
+    "./HOOK.md": "./HOOK.md"
+  },
   "publishConfig": {
     "access": "public"
   },
   "files": [
     "README.md",
+    "HOOK.md",
+    "index.js",
     "openclaw.plugin.json",
     "package.json",
-    "packaging/",
-    "src/",
     "docs/",
-    "tsconfig.json",
-    "tsconfig.tests.json"
+    "dist/"
   ],
   "engines": {
     "node": ">=22"
   },
   "openclaw": {
     "extensions": [
-      "./src/index.ts"
-    ]
+      "./dist/index.js"
+    ],
+    "install": {
+      "minHostVersion": ">=2026.3.22"
+    }
   },
   "scripts": {
+    "build": "pnpm run generate:contracts && ./.ts-toolchain/node_modules/.bin/tsc -p tsconfig.build.json && mkdir -p dist/proto && cp -rf api/proto/. dist/proto/",
     "check": "./.ts-toolchain/node_modules/.bin/tsc --noEmit && pnpm run test:ts",
     "test:ts": "./.ts-toolchain/node_modules/.bin/tsc -p tsconfig.tests.json && node --test .ts-build/test/unit/*.test.js",
     "test:integration": "./.ts-toolchain/node_modules/.bin/tsc -p tsconfig.tests.json && node --test .ts-build/test/integration/checklist-validation.test.js .ts-build/test/integration/dream-promotion.test.js .ts-build/test/integration/host-flow.test.js .ts-build/test/integration/markdown-ingest.test.js .ts-build/test/integration/sidecar-lifecycle.test.js",
@@ -34,9 +48,15 @@
     "benchmark:longmemeval": "./.ts-toolchain/node_modules/.bin/tsc -p tsconfig.tests.json && node --test .ts-build/test/integration/longmemeval-benchmark.test.js",
     "benchmark:longmemeval:score": "node scripts/longmemeval-score.mjs",
     "benchmark:longmemeval:diagnose": "node scripts/longmemeval-diagnose.mjs",
-    "build:daemon": "bash scripts/build-daemon.sh"
+    "prepack": "npm run build",
+    "build:daemon": "bash scripts/build-daemon.sh",
+    "generate:contracts": "cd ../libravdb-contracts && pnpm run build && cp -r gen/js/. ../openclaw-memory-libravdb/src/generated/"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "1.7.2",
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
+    "@xdarkicex/libravdb-contracts": "file:../libravdb-contracts",
     "openclaw": "*"
   },
   "peerDependencies": {

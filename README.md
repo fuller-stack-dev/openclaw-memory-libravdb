@@ -1,6 +1,6 @@
 # LibraVDB Memory for OpenClaw
 
-[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](./sidecar/go.mod)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://github.com/xDarkicex/libravdbd)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](./package.json)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-memory%20plugin-111827)](./openclaw.plugin.json)
 
@@ -21,6 +21,10 @@ This repository pairs a TypeScript OpenClaw plugin with a Go daemon backed by
 the daemon handles embeddings, retrieval, storage, and compaction.
 On newer OpenClaw builds, it also bridges the built-in `memory_search` runtime
 to the same libraVDB sidecar instead of leaving that tool inert.
+
+For local development, this repo can target a running daemon, a manual local
+daemon binary, or a manually pointed local daemon checkout without requiring the
+daemon source to live inside this plugin repository.
 
 ## Why This Exists
 
@@ -394,3 +398,30 @@ supported user path today is:
 
 That tradeoff is intentional. It keeps the plugin installation surface simple
 and auditable while preserving the full local memory engine at runtime.
+
+## Generated Contract Types
+
+TypeScript code in this plugin imports generated LibraVDB IPC types via the
+`@xdarkicex/libravdb-contracts` package:
+
+```typescript
+import { RpcRequest, RpcResponse } from "@xdarkicex/libravdb-contracts";
+```
+
+The generated types live in `libravdb-contracts/gen/ts/` and are produced by
+`buf generate` in that repository. A local `paths` alias in `tsconfig.json`
+wires the package name to that directory, so imports resolve without a
+`node_modules` install in the contracts repo.
+
+To regenerate after a proto change:
+
+```bash
+cd ../libravdb-contracts && buf generate
+# or from this repo:
+pnpm run generate:contracts
+```
+
+The alias is configured in both `tsconfig.json` (type-checking) and
+`tsconfig.build.json` (declaration emission). The generated `.ts` files use
+`@bufbuild/protobuf` at runtime, which must be available in the plugin's
+`node_modules`.

@@ -105,20 +105,18 @@ If you are not using Homebrew, manage the daemon explicitly.
 Linux user service from the repo template:
 
 ```bash
-# Replace vX.Y.Z with the latest tag from:
-# https://github.com/xDarkicex/openclaw-memory-libravdb/releases
+# Replace vX.Y.Z with the published libravdbd release you want to install.
 mkdir -p ~/.local/bin ~/.config/systemd/user
-curl -L -o ~/.local/bin/libravdbd https://github.com/xDarkicex/openclaw-memory-libravdb/releases/download/vX.Y.Z/libravdbd-linux-amd64
+# Download the matching published libravdbd binary and service template.
+curl -L -o ~/.local/bin/libravdbd <published-libravdbd-binary-url>
 chmod +x ~/.local/bin/libravdbd
-curl -L -o ~/.config/systemd/user/libravdbd.service \
-  https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/packaging/systemd/libravdbd.service
+curl -L -o ~/.config/systemd/user/libravdbd.service <published-libravdbd-service-template-url>
 systemctl --user enable --now libravdbd.service
 ```
 
 macOS LaunchAgent from the repo template:
 
-1. Download `com.xdarkicex.libravdbd.plist` from:
-   `https://raw.githubusercontent.com/xDarkicex/openclaw-memory-libravdb/main/packaging/launchd/com.xdarkicex.libravdbd.plist`
+1. Download the published `com.xdarkicex.libravdbd.plist` template for your release.
 2. Replace `__HOME__` with your home directory.
 3. Save it to `~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`.
 4. Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`.

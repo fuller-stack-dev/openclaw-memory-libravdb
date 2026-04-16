@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { tmpdir } from "node:os";
@@ -12,7 +13,8 @@ const execFileAsync = promisify(execFile);
 
 const repoRoot = path.resolve(process.cwd());
 const buildScript = path.join(repoRoot, "scripts", "build-daemon.sh");
-const daemonBinary = path.join(repoRoot, ".daemon-bin", process.platform === "win32" ? "libravdbd.exe" : "libravdbd");
+const daemonBinaryName = process.platform === "win32" ? "libravdbd.exe" : "libravdbd";
+const repoDaemonBinary = path.join(repoRoot, ".daemon-bin", daemonBinaryName);
 const daemonReadyTimeoutMs = 120_000;
 
 export interface TestDaemonHandle {
@@ -40,6 +42,23 @@ async function ensureDaemonBuilt(): Promise<void> {
       });
   }
   await buildOnce;
+}
+
+async function resolveDaemonBinary(): Promise<string> {
+  const configured = process.env.LIBRAVDB_TEST_DAEMON_BINARY?.trim();
+  if (configured) {
+    return configured;
+  }
+  if (existsSync(repoDaemonBinary)) {
+    return repoDaemonBinary;
+  }
+  await ensureDaemonBuilt();
+  if (existsSync(repoDaemonBinary)) {
+    return repoDaemonBinary;
+  }
+  throw new Error(
+    "unable to locate a test daemon binary; set LIBRAVDB_TEST_DAEMON_BINARY, set LIBRAVDBD_SOURCE_DIR, or install libravdbd on PATH",
+  );
 }
 
 async function waitForLineMatching(readable: NodeJS.ReadableStream, pattern: RegExp): Promise<string> {
@@ -77,7 +96,7 @@ async function waitForReachableEndpoint(endpoint: string, child?: { exitCode: nu
   throw new Error(`timed out waiting for local libravdbd to become reachable at ${endpoint}`);
 }
 
-async function launchDaemonAtEndpoint(endpoint: string, tempDir: string): Promise<TestDaemonHandle> {
+async function launchDaemonAtEndpoint(daemonBinary: string, endpoint: string, tempDir: string): Promise<TestDaemonHandle> {
   const dbPath = path.join(tempDir, "libravdb-data.libravdb");
   let child: ReturnType<typeof spawn> | null = null;
   let stderr = "";
@@ -174,12 +193,12 @@ export async function acquireTestDaemonHandle(): Promise<TestDaemonHandle> {
     };
   }
 
-  await ensureDaemonBuilt();
+  const daemonBinary = await resolveDaemonBinary();
   if (process.platform !== "win32") {
     const tempDir = await mkdtemp(path.join(tmpdir(), "libravdbd-test-"));
     const unixEndpoint = `unix:${path.join(tempDir, "libravdb.sock")}`;
     try {
-      return await launchDaemonAtEndpoint(unixEndpoint, tempDir);
+      return await launchDaemonAtEndpoint(daemonBinary, unixEndpoint, tempDir);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!message.includes("exited before becoming reachable") && !message.includes("operation not permitted")) {
@@ -192,7 +211,7 @@ export async function acquireTestDaemonHandle(): Promise<TestDaemonHandle> {
 
   const tempDir = await mkdtemp(path.join(tmpdir(), "libravdbd-test-"));
   try {
-    return await launchDaemonAtEndpoint("tcp:127.0.0.1:0", tempDir);
+    return await launchDaemonAtEndpoint(daemonBinary, "tcp:127.0.0.1:0", tempDir);
   } catch (error) {
     await rm(tempDir, { recursive: true, force: true });
     throw error;

@@ -1,4 +1,3 @@
-import type { ComparisonProfileSummary } from "./comparison-experiments.js";
 
 export interface PluginConfig {
   dbPath?: string;
@@ -88,27 +87,7 @@ export interface PluginConfig {
   rpcTimeoutMs?: number;
   maxRetries?: number;
   logLevel?: "debug" | "info" | "warn" | "error";
-}
-
-export interface GatingResult {
-  g: number;
-  t: number;
-  h: number;
-  r: number;
-  d: number;
-  p: number;
-  a: number;
-  dtech: number;
-  gconv: number;
-  gtech: number;
-  inputFreq: number;
-  memSaturation: number;
-}
-
-export interface MemoryMessage {
-  id?: string;
-  role: string;
-  content: string;
+  grpcEndpoint?: string;
 }
 
 export interface SearchResult {
@@ -150,13 +129,13 @@ export interface SearchResult {
 
 export interface SidecarSocket {
   setEncoding(encoding: string): void;
-  on(event: "data", handler: (chunk: string) => void): void;
+  on(event: "data", handler: (chunk: Buffer) => void): void;
   on(event: "close", handler: () => void): void;
   on(event: "error", handler: (error: Error) => void): void;
   once(event: "connect", handler: () => void): void;
   once(event: "error", handler: (error: Error) => void): void;
-  write(chunk: string): void;
-  destroy(): void;
+  write(chunk: Buffer | string): void;
+  destroy(err?: Error): void;
 }
 
 export interface LoggerLike {
@@ -191,88 +170,3 @@ export interface RecallCache<T = unknown> {
   clearUser(userId: string): void;
 }
 
-export interface ContextNamespaceArgs {
-  sessionId: string;
-  sessionKey?: string;
-  userId?: string;
-}
-
-export interface ContextBootstrapArgs extends ContextNamespaceArgs {}
-
-export interface ContextIngestArgs extends ContextNamespaceArgs {
-  message: MemoryMessage;
-  isHeartbeat?: boolean;
-}
-
-export interface ContextAssembleArgs extends ContextNamespaceArgs {
-  messages: MemoryMessage[];
-  tokenBudget: number;
-}
-
-export interface ContextAssembleResult {
-  messages: MemoryMessage[];
-  estimatedTokens: number;
-  systemPromptAddition: string;
-  _profile?: string[];
-  _debug?: {
-    recoveryTriggerFired?: boolean;
-    crossSessionRawRecovery?: boolean;
-    rawUserRecoveryCandidates?: Array<{
-      id: string;
-      text: string;
-      selected: boolean;
-      tokenEstimate: number;
-      temporalAnchorDensity: number;
-      semanticScore: number;
-      slotCoverage?: number;
-      slotMatches?: string[];
-      lexicalCoverage: number;
-      recencyScore: number;
-      finalScore: number;
-      rationale: string;
-      comparisonSide?: 0 | 1 | null;
-      comparisonSlot?: string;
-      comparisonSlotRecall?: number;
-      comparisonSlotPrecision?: number;
-      comparisonSlotSpecificity?: number;
-      comparisonSlotPositionWeightedRecall?: number;
-      comparisonSlotPositionWeightedPrecision?: number;
-      comparisonSlotPositionWeightedSpecificity?: number;
-      comparisonFirstPersonClauseCount?: number;
-      comparisonProspectivePersonalVerbCount?: number;
-      comparisonPlanningDensity?: number;
-      comparisonPastness?: number;
-      comparisonSideWitnessScore?: number;
-    }>;
-    recoveryDedupedOrder?: Array<{
-      id: string;
-      recoveryScope: string;
-      finalScore: number;
-      tokenEstimate: number;
-    }>;
-    recoveryFittedOrder?: Array<{
-      id: string;
-      recoveryScope: string;
-      finalScore: number;
-      tokenEstimate: number;
-    }>;
-    recoveryReserveTokens?: number;
-    temporalQueryIndicator?: number;
-    temporalQueryActive?: boolean;
-    temporalQueryPatterns?: string[];
-    temporalSelectorApplied?: boolean;
-    temporalSelectorReason?: string;
-    temporalRecoverySlots?: string[];
-    temporalComparisonCoverageApplied?: boolean;
-    temporalComparisonCoverageSlots?: string[];
-    temporalComparisonCoverageMinTokens?: number;
-    temporalComparisonWitnessIds?: string[];
-    comparisonProfile?: ComparisonProfileSummary;
-  };
-}
-
-export interface ContextCompactArgs {
-  sessionId: string;
-  force?: boolean;
-  targetSize?: number;
-}

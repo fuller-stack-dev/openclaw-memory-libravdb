@@ -1,58 +1,159 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
+import {
+  AssembleContextInternalResponse,
+  RpcRequest,
+  RpcResponse,
+  SearchTextResponse,
+} from "@xdarkicex/libravdb-contracts";
 import { RpcClient } from "../../src/rpc.js";
 import type { SidecarSocket } from "../../src/types.js";
 
 class FakeSocket implements SidecarSocket {
-  private dataHandlers: Array<(chunk: string) => void> = [];
-  private closeHandlers: Array<() => void> = [];
-  private errorHandlers: Array<(error: Error) => void> = [];
-  private connectOnce: Array<() => void> = [];
+  private readonly dataHandlers: Array<(chunk: Buffer) => void> = [];
+  private readonly closeHandlers: Array<() => void> = [];
+  private readonly errorHandlers: Array<(error: Error) => void> = [];
+  private readonly connectOnce: Array<() => void> = [];
   private errorOnce: Array<(error: Error) => void> = [];
-  public writes: string[] = [];
+  public writes: Buffer[] = [];
 
   setEncoding(_encoding: string): void {}
 
-  on(event: "data" | "close" | "error", handler: ((chunk: string) => void) | (() => void) | ((error: Error) => void)): void {
-    if (event === "data") this.dataHandlers.push(handler as (chunk: string) => void);
-    else if (event === "error") this.errorHandlers.push(handler as (error: Error) => void);
-    else this.closeHandlers.push(handler as () => void);
+  on(
+    event: "data" | "close" | "error",
+    handler: ((chunk: Buffer) => void) | (() => void) | ((error: Error) => void),
+  ): void {
+    if (event === "data") {
+      this.dataHandlers.push(handler as (chunk: Buffer) => void);
+    } else if (event === "error") {
+      this.errorHandlers.push(handler as (error: Error) => void);
+    } else {
+      this.closeHandlers.push(handler as () => void);
+    }
   }
 
   once(event: "connect" | "error", handler: (() => void) | ((error: Error) => void)): void {
-    if (event === "connect") this.connectOnce.push(handler as () => void);
-    else this.errorOnce.push(handler as (error: Error) => void);
+    if (event === "connect") {
+      this.connectOnce.push(handler as () => void);
+    } else {
+      this.errorOnce.push(handler as (error: Error) => void);
+    }
   }
 
-  write(chunk: string): void {
-    this.writes.push(chunk);
+  write(chunk: Buffer | string): void {
+    this.writes.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
   destroy(): void {
-    for (const handler of this.closeHandlers) handler();
+    for (const handler of this.closeHandlers) {
+      handler();
+    }
   }
 
-  emitData(chunk: string): void {
-    for (const handler of this.dataHandlers) handler(chunk);
+  emitData(...chunks: Buffer[]): void {
+    for (const chunk of chunks) {
+      for (const handler of this.dataHandlers) {
+        handler(chunk);
+      }
+    }
   }
 
   emitError(error: Error): void {
-    for (const handler of this.errorHandlers) handler(error);
-    for (const handler of this.errorOnce) handler(error);
+    for (const handler of this.errorHandlers) {
+      handler(error);
+    }
+    for (const handler of this.errorOnce) {
+      handler(error);
+    }
     this.errorOnce = [];
   }
 }
 
-test("RpcClient resolves buffered multi-chunk responses", async () => {
+function parseClientFrame(frame: Buffer): Buffer {
+  const offset = frame[0] === 0x02 ? 1 : 0;
+  const payloadLength = frame.readUInt32BE(offset);
+  return frame.subarray(offset + 4, offset + 4 + payloadLength);
+}
+
+function frameServerPayload(payload: Uint8Array): Buffer {
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(payload.byteLength, 0);
+  return Buffer.concat([header, Buffer.from(payload)]);
+}
+
+test("RpcClient sends and receives protobuf envelopes", async () => {
   const socket = new FakeSocket();
   const client = new RpcClient(socket, { timeoutMs: 100 });
 
-  const pending = client.call("health", {});
-  socket.emitData('{"jsonrpc":"2.0","id":1,"result":{"ok":');
-  socket.emitData('true}}\n');
+  const pending = client.call<{ results: Array<{ metadata: Record<string, unknown> }> }>("search_text", {
+    collection: "user:123",
+    text: "needle",
+    k: 2,
+  });
 
-  await assert.doesNotReject(pending);
+  assert.equal(socket.writes.length, 1);
+  const request = RpcRequest.fromBinary(parseClientFrame(socket.writes[0]!));
+  assert.equal(request.method, "search_text");
+  assert.equal(request.id, 1n);
+  assert.ok(request.params.byteLength > 0);
+
+  const response = new (RpcResponse as any)({
+    id: request.id,
+    result: SearchTextResponse.fromJson({
+      results: [
+        {
+          id: "mem-1",
+          score: 0.99,
+          text: "needle hit",
+          metadata: { collection: "user:123" },
+        },
+      ],
+    }).toBinary(),
+  });
+  const responseFrame = frameServerPayload(response.toBinary());
+  socket.emitData(responseFrame.subarray(0, 3), responseFrame.subarray(3));
+
+  const result = await pending;
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]?.metadata.collection, "user:123");
+});
+
+test("RpcClient preserves empty result arrays and debug payloads", async () => {
+  const socket = new FakeSocket();
+  const client = new RpcClient(socket, { timeoutMs: 100 });
+
+  const pending = client.call<{
+    messages?: Array<{ role: string; content: string; id?: string }>;
+    estimatedTokens?: number;
+    systemPromptAddition?: string;
+    debug?: unknown;
+  }>("assemble_context_internal", {
+    sessionId: "s1",
+    sessionKey: "k1",
+    userId: "u1",
+    messages: [],
+    tokenBudget: 0,
+    prompt: "",
+    emitDebug: true,
+    config: {},
+  });
+
+  const request = RpcRequest.fromBinary(parseClientFrame(socket.writes[0]!));
+  const response = new (RpcResponse as any)({
+    id: request.id,
+    result: AssembleContextInternalResponse.fromJson({
+      messages: [],
+      estimatedTokens: 12,
+      systemPromptAddition: "sys",
+      debug: { recoveryTriggerFired: false, crossSessionRawRecovery: false },
+    }).toBinary(),
+  });
+  socket.emitData(frameServerPayload(response.toBinary()));
+
+  const result = await pending;
+  assert.deepEqual(result.messages ?? [], []);
+  assert.ok(result.debug !== undefined, "debug payload should be preserved");
 });
 
 test("RpcClient rejects on timeout", async () => {

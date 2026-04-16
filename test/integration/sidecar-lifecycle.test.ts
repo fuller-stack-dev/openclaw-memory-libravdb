@@ -1,13 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { HealthResponse, RpcRequest, RpcResponse } from "@xdarkicex/libravdb-contracts";
 import { RpcClient } from "../../src/rpc.js";
 import { computeStartupConnectRetryDelay, resolveEndpoint, startSidecar, type SidecarRuntime } from "../../src/sidecar.js";
 import type { PluginConfig, SidecarSocket } from "../../src/types.js";
 import { createMemoryLogger } from "../helpers/logger.js";
 
 type CloseHandler = () => void;
-type DataHandler = (chunk: string) => void;
+type DataHandler = (chunk: Buffer) => void;
 type ErrorHandler = (error: Error) => void;
 
 class ControlledSocket implements SidecarSocket {
@@ -49,19 +50,27 @@ class ControlledSocket implements SidecarSocket {
     this.errorOnce.add(handler as ErrorHandler);
   }
 
-  write(chunk: string): void {
+  write(chunk: Buffer | string): void {
     if (!this.autoRespond) {
       return;
     }
     try {
-      const msg = JSON.parse(chunk) as { id: number; method: string };
-      const response = JSON.stringify({
-        jsonrpc: "2.0",
-        id: msg.id,
-        result: msg.method === "health" ? { ok: true, endpoint: this.endpoint } : {},
+      const frame = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const offset = frame[0] === 0x02 ? 1 : 0;
+      const length = frame.readUInt32BE(offset);
+      const request = RpcRequest.fromBinary(frame.subarray(offset + 4, offset + 4 + length));
+      const result = request.method === "health"
+        ? new (HealthResponse as any)({ ok: true, message: this.endpoint }).toBinary()
+        : new Uint8Array(0);
+      const response = new (RpcResponse as any)({
+        id: request.id,
+        result,
       });
+      const payload = response.toBinary();
+      const header = Buffer.alloc(4);
+      header.writeUInt32BE(payload.byteLength, 0);
       for (const handler of this.onData) {
-        handler(`${response}\n`);
+        handler(Buffer.concat([header, Buffer.from(payload)]));
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));

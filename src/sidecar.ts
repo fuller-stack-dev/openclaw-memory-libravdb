@@ -6,7 +6,7 @@ import path from "node:path";
 import type { LoggerLike, PluginConfig, SidecarHandle, SidecarSocket } from "./types.js";
 
 type CloseHandler = () => void;
-type DataHandler = (chunk: string) => void;
+type DataHandler = (chunk: Buffer) => void;
 type ErrorHandler = (error: Error) => void;
 
 const STARTUP_CONNECT_MAX_RETRIES = 5;
@@ -57,16 +57,40 @@ class PlaceholderSocket implements SidecarSocket {
     this.errorOnce.add(handler as ErrorHandler);
   }
 
-  write(chunk: string): void {
+  write(chunk: Buffer | string): void {
     try {
-      const msg = JSON.parse(chunk);
-      const response = JSON.stringify({
-        jsonrpc: "2.0",
-        id: msg.id,
-        result: msg.method === "health" ? { ok: true } : {},
-      });
-      for (const handler of this.onData) {
-        handler(`${response}\n`);
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+      let offset = 0;
+      
+      // Consume the one-time magic byte if present
+      if (buf.byteLength > 0 && buf[0] === 0x02) offset = 1;
+      
+      // Parse length-prefixed frames
+      while (offset + 4 <= buf.byteLength) {
+        const len = buf.readUInt32BE(offset);
+        offset += 4;
+        if (offset + len > buf.byteLength) break;
+        
+        const msg = JSON.parse(buf.subarray(offset, offset + len).toString("utf8")) as {
+          id?: number; method?: string;
+        };
+        offset += len;
+        
+        const responseJson = JSON.stringify({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: msg.method === "health" ? { ok: true } : {},
+        });
+        
+        // Emit as a properly framed binary response
+        const payload = Buffer.from(responseJson, "utf8");
+        const header = Buffer.alloc(4);
+        header.writeUInt32BE(payload.byteLength, 0);
+        const frame = Buffer.concat([header, payload]);
+        
+        for (const handler of this.onData) {
+          handler(frame);
+        }
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -173,11 +197,11 @@ class SupervisorSocket implements SidecarSocket {
     this.errorOnce.add(handler as ErrorHandler);
   }
 
-  write(chunk: string): void {
+  write(chunk: Buffer | string): void {
     if (!this.current) {
       throw new Error("Sidecar socket unavailable");
     }
-    this.current.write(chunk);
+    this.current.write(chunk as Buffer); // Cast/pass down safely
   }
 
   destroy(): void {

@@ -10,6 +10,7 @@ function createRuntimeRecorder() {
     async getRpc() {
       throw new Error("not used in lifecycle hook tests");
     },
+    getKernel: () => null,
     async emitLifecycleHint(hint: LifecycleHint) {
       hints.push(hint);
     },

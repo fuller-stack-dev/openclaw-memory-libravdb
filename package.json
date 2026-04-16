@@ -59,6 +59,9 @@
     "@xdarkicex/libravdb-contracts": "file:../libravdb-contracts",
     "openclaw": "*"
   },
+  "devDependencies": {
+    "@types/node": "^20.11.0"
+  },
   "peerDependencies": {
     "openclaw": ">=2026.3.22"
   }

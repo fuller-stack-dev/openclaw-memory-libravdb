@@ -1,4 +1,4 @@
-export const DAEMON_RELEASE_REPO = "https://github.com/xDarkicex/libravdbd/releases/download";
+export const DAEMON_RELEASE_REPO = "https://github.com/xDarkicex/homebrew-openclaw-libravdb-memory/releases/download";
 
 export const DAEMON_RELEASE_TARGETS = {
   "darwin-arm64": "libravdbd-darwin-arm64",

@@ -12,7 +12,7 @@ For deeper operational detail, use the full
 On macOS, the shortest supported path is:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
+brew tap xDarkicex/homebrew-openclaw-libravdb-memory
 brew install libravdbd
 brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
@@ -85,7 +85,7 @@ Default data path:
 Homebrew is the preferred daemon lifecycle on macOS:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
+brew tap xDarkicex/homebrew-openclaw-libravdb-memory
 brew install libravdbd
 brew services start libravdbd
 ```

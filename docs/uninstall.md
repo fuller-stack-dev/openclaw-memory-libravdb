@@ -64,7 +64,7 @@ longer assigned to an active slot.
 
 ```bash
 brew uninstall libravdbd
-brew untap xDarkicex/openclaw-libravdb-memory
+brew untap xDarkicex/homebrew-openclaw-libravdb-memory
 ```
 
 ### Manual Daemon Install

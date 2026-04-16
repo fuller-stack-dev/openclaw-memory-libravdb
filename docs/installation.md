@@ -120,7 +120,7 @@ extractive compaction. The only optional runtime network path is:
 ### Fastest Path on macOS
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
+brew tap xDarkicex/homebrew-openclaw-libravdb-memory
 brew install libravdbd
 brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
@@ -171,7 +171,7 @@ openclaw memory status
 Homebrew users should normally install from the published tap:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
+brew tap xDarkicex/homebrew-openclaw-libravdb-memory
 brew install libravdbd
 brew services start libravdbd
 ```
@@ -187,8 +187,7 @@ The generated Homebrew formula also stages the bundled ONNX Runtime archive, the
 
 If your GitHub Actions configuration includes:
 
-- repository variable `HOMEBREW_TAP_REPO`, for example `xDarkicex/homebrew-openclaw-libravdb-memory`
-- repository secret `HOMEBREW_TAP_TOKEN`
+- public tap repository `xDarkicex/homebrew-openclaw-libravdb-memory`
 
 then tagged releases also push the generated formula into `Formula/libravdbd.rb` in that tap repository automatically.
 

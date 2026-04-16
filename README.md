@@ -22,9 +22,8 @@ the daemon handles embeddings, retrieval, storage, and compaction.
 On newer OpenClaw builds, it also bridges the built-in `memory_search` runtime
 to the same libraVDB sidecar instead of leaving that tool inert.
 
-For local development, this repo can target a running daemon, a manual local
-daemon binary, or a manually pointed local daemon checkout without requiring the
-daemon source to live inside this plugin repository.
+For local development, this repo can target a running daemon or a manual local
+daemon binary.
 
 ## Why This Exists
 
@@ -69,7 +68,7 @@ These are the core differentiators the project is built around:
 The supported install flow is:
 
 ```bash
-brew tap xDarkicex/openclaw-libravdb-memory
+brew tap xDarkicex/homebrew-openclaw-libravdb-memory
 brew install libravdbd
 brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb

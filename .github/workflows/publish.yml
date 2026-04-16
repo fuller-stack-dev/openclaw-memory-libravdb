@@ -39,6 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: zephyr-systems/libravdb-contracts
+          ref: main
           path: libravdb-contracts
 
       - uses: bufbuild/buf-setup-action@v1
@@ -67,7 +68,7 @@ jobs:
 
       - name: Install contracts dependencies
         working-directory: libravdb-contracts
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Verify release tag matches package and manifest versions
         if: startsWith(github.ref, 'refs/tags/v')

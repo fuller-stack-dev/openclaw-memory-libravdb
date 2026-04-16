@@ -56,8 +56,14 @@ jobs:
           cache-dependency-path: openclaw-memory-libravdb/pnpm-lock.yaml
 
       - name: Install dependencies
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         working-directory: openclaw-memory-libravdb
         run: pnpm install --frozen-lockfile
+
+      - name: Install dependencies (dry-run)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        working-directory: openclaw-memory-libravdb
+        run: pnpm install --no-frozen-lockfile
 
       - name: Install contracts dependencies
         working-directory: libravdb-contracts

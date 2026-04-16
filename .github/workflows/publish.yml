@@ -36,6 +36,10 @@ jobs:
           repository: zephyr-systems/libravdb-contracts
           path: libravdb-contracts
 
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9

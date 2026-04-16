@@ -10,6 +10,11 @@ on:
         description: "Git ref to publish (defaults to current ref)"
         required: false
         type: string
+      dry_run:
+        description: "Run a publish dry-run instead of publishing to npm"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -71,17 +76,25 @@ jobs:
         run: npm pack --dry-run
 
       - name: Verify npm authentication
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         working-directory: openclaw-memory-libravdb
         run: npm whoami
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Dry-run publish package
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        working-directory: openclaw-memory-libravdb
+        run: npm publish --access public --dry-run
+
       - name: Publish package
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         working-directory: openclaw-memory-libravdb
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify package is visible on npm
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         working-directory: openclaw-memory-libravdb
         run: npm view @xdarkicex/openclaw-memory-libravdb version

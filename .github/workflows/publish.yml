@@ -42,6 +42,17 @@ jobs:
           ref: main
           path: libravdb-contracts
 
+      - name: Diagnostic checkout snapshot
+        run: |
+          echo "plugin HEAD: $(git -C openclaw-memory-libravdb rev-parse HEAD)"
+          echo "contracts HEAD: $(git -C libravdb-contracts rev-parse HEAD)"
+          echo "plugin package.json:"
+          sed -n '1,80p' openclaw-memory-libravdb/package.json
+          echo "contracts package.json:"
+          sed -n '1,80p' libravdb-contracts/package.json
+          echo "contracts lockfile @types/node hits:"
+          grep -n '@types/node' libravdb-contracts/pnpm-lock.yaml || true
+
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ github.token }}

@@ -61,7 +61,7 @@ jobs:
 
       - name: Install contracts dependencies
         working-directory: libravdb-contracts
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Verify release tag matches package and manifest versions
         if: startsWith(github.ref, 'refs/tags/v')

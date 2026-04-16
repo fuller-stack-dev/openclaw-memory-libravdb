@@ -29,6 +29,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
 
     steps:
+      - name: Workflow context
+        run: |
+          echo "github.ref=${{ github.ref }}"
+          echo "github.sha=${{ github.sha }}"
+          echo "github.workflow_ref=${{ github.workflow_ref }}"
+
       - name: Checkout Plugin (Self)
         uses: actions/checkout@v4
         with:

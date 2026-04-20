@@ -11,7 +11,7 @@ import {
   BootstrapSessionKernelRequest,
   IngestMessageKernelRequest,
   CompactSessionRequest,
-} from "@xdarkicex/libravdb-contracts";
+} from "./generated/libravdb/ipc/v1/rpc_pb.js";
 import { resolveDurableNamespace } from "./durable-namespace.js";
 
 export function buildContextEngineFactory(

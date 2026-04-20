@@ -6,7 +6,7 @@ import {
   RpcRequest,
   RpcResponse,
   SearchTextResponse,
-} from "@xdarkicex/libravdb-contracts";
+} from "../../src/generated/libravdb/ipc/v1/rpc_pb.js";
 import { RpcClient } from "../../src/rpc.js";
 import type { SidecarSocket } from "../../src/types.js";
 

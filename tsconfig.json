@@ -14,8 +14,7 @@
     "baseUrl": ".",
     "typeRoots": ["./node_modules/@types"],
     "paths": {
-      "@xdarkicex/libravdb-contracts": ["src/generated"],
-      "@xdarkicex/libravdb-contracts/*": ["src/generated/*"]
+
     }
   },
   "include": [

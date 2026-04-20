@@ -32,7 +32,7 @@ import {
   SessionLifecycleHintRequest,
   SessionLifecycleHintResponse,
   StringList,
-} from "@xdarkicex/libravdb-contracts";
+} from "./generated/libravdb/ipc/v1/rpc_pb.js";
 
 import type { LifecycleHint } from "./plugin-runtime.js";
 

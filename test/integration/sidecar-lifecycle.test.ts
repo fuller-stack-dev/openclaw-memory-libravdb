@@ -18,6 +18,7 @@ class ControlledSocket implements SidecarSocket {
   private readonly connectOnce = new Set<CloseHandler>();
   private readonly errorOnce = new Set<ErrorHandler>();
   public autoRespond = true;
+  private encoding?: string;
 
   constructor(public readonly endpoint: string) {
     queueMicrotask(() => {
@@ -28,7 +29,9 @@ class ControlledSocket implements SidecarSocket {
     });
   }
 
-  setEncoding(_encoding: string): void {}
+  setEncoding(encoding: string): void {
+    this.encoding = encoding;
+  }
 
   on(event: "data" | "close" | "error", handler: DataHandler | CloseHandler | ErrorHandler): void {
     if (event === "data") {
@@ -55,10 +58,10 @@ class ControlledSocket implements SidecarSocket {
       return;
     }
     try {
-      const frame = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      const offset = frame[0] === 0x02 ? 1 : 0;
-      const length = frame.readUInt32BE(offset);
-      const request = RpcRequest.fromBinary(frame.subarray(offset + 4, offset + 4 + length));
+      const requestFrame = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const offset = requestFrame[0] === 0x02 ? 1 : 0;
+      const length = requestFrame.readUInt32BE(offset);
+      const request = RpcRequest.fromBinary(requestFrame.subarray(offset + 4, offset + 4 + length));
       const result = request.method === "health"
         ? new (HealthResponse as any)({ ok: true, message: this.endpoint }).toBinary()
         : new Uint8Array(0);
@@ -69,8 +72,10 @@ class ControlledSocket implements SidecarSocket {
       const payload = response.toBinary();
       const header = Buffer.alloc(4);
       header.writeUInt32BE(payload.byteLength, 0);
+      const responseFrame = Buffer.concat([header, Buffer.from(payload)]);
       for (const handler of this.onData) {
-        handler(Buffer.concat([header, Buffer.from(payload)]));
+        // Real Node sockets switch data events to strings once setEncoding is enabled.
+        handler(this.encoding ? (responseFrame.toString(this.encoding as BufferEncoding) as unknown as Buffer) : responseFrame);
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));

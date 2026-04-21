@@ -25,6 +25,58 @@ to the same libraVDB sidecar instead of leaving that tool inert.
 For local development, this repo can target a running daemon or a manual local
 daemon binary.
 
+## Quick Start
+
+Fastest supported install on macOS:
+
+```bash
+brew tap xDarkicex/homebrew-openclaw-libravdb-memory
+brew install libravdbd
+brew services start libravdbd
+openclaw plugins install @xdarkicex/openclaw-memory-libravdb
+```
+
+Then make sure the plugin owns both required OpenClaw slots:
+
+```json
+{
+  "plugins": {
+    "slots": {
+      "memory": "libravdb-memory",
+      "contextEngine": "libravdb-memory"
+    },
+    "entries": {
+      "libravdb-memory": {
+        "enabled": true,
+        "config": {
+          "sidecarPath": "auto"
+        }
+      }
+    }
+  }
+}
+```
+
+Important install note:
+
+- Current OpenClaw installs may switch `contextEngine` automatically when the plugin is installed, but still leave `memory` on the previous provider. Set `memory` to `libravdb-memory` explicitly until the published plugin metadata is updated to auto-claim both slots during install.
+
+Verify the setup:
+
+```bash
+brew services list
+openclaw plugins list
+openclaw memory status
+```
+
+Healthy state means:
+
+- `libravdbd` is running
+- `libravdb-memory` is loaded
+- both `memory` and `contextEngine` point to `libravdb-memory`
+
+If `openclaw memory status` is unavailable because your host excludes the bundled `memory` CLI surface via `plugins.allow`, use `openclaw plugins list` plus the daemon service status instead.
+
 ## Why This Exists
 
 The stock "single memory bucket" pattern is good for simple persistence, but it
@@ -62,50 +114,6 @@ These are the core differentiators the project is built around:
 - Automatic compaction: long sessions compact behind a protected recent tail.
 - Crash-resilient IPC: the host talks to a sidecar over a stable local socket
   or loopback TCP endpoint with degraded-mode fallback.
-
-## Quick Start
-
-The supported install flow is:
-
-```bash
-brew tap xDarkicex/homebrew-openclaw-libravdb-memory
-brew install libravdbd
-brew services start libravdbd
-openclaw plugins install @xdarkicex/openclaw-memory-libravdb
-```
-
-The Homebrew formula installs the daemon plus the bundled ONNX Runtime, embedding assets, and T5 summarizer assets it needs to boot cleanly on supported platforms.
-
-Then assign the plugin to both required OpenClaw slots in
-`~/.openclaw/openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "libravdb-memory",
-      "contextEngine": "libravdb-memory"
-    },
-    "configs": {
-      "libravdb-memory": {
-        "sidecarPath": "auto"
-      }
-    }
-  }
-}
-```
-
-Verify the setup:
-
-```bash
-openclaw memory status
-```
-
-Expected healthy state:
-
-- the daemon is reachable
-- the plugin is active as the memory provider
-- the runtime can report stored counts and model readiness
 
 ## Markdown Ingestion
 

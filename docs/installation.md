@@ -145,7 +145,7 @@ Default endpoints:
 - macOS/Linux: `unix:$HOME/.clawdb/run/libravdb.sock`
 - Windows: `tcp:127.0.0.1:37421`
 
-If you run the daemon on a different endpoint, set `plugins.configs.libravdb-memory.sidecarPath` in `~/.openclaw/openclaw.json`.
+If you run the daemon on a different endpoint, set `plugins.entries.libravdb-memory.config.sidecarPath` in `~/.openclaw/openclaw.json`.
 
 ### Linux
 
@@ -200,9 +200,12 @@ Example plugin config:
       "memory": "libravdb-memory",
       "contextEngine": "libravdb-memory"
     },
-    "configs": {
+    "entries": {
       "libravdb-memory": {
-        "sidecarPath": "unix:/Users/<you>/.clawdb/run/libravdb.sock"
+        "enabled": true,
+        "config": {
+          "sidecarPath": "unix:/Users/<you>/.clawdb/run/libravdb.sock"
+        }
       }
     }
   }
@@ -219,7 +222,7 @@ Installed plugin: libravdb-memory
 
 ## Activation
 
-The manifest declares `kind: "context-engine"` and the runtime registers the memory prompt and memory runtime surfaces in code. It is still intended to own both the `memory` and `contextEngine` slots together. Treat partial slot assignment as a misconfiguration.
+The published install flow currently behaves like a `context-engine` plugin for automatic slot assignment, even though the runtime also registers the memory prompt and memory runtime surfaces in code. It is still intended to own both the `memory` and `contextEngine` slots together. Treat partial slot assignment as a misconfiguration.
 
 Add this to `~/.openclaw/openclaw.json`:
 
@@ -237,11 +240,12 @@ Add this to `~/.openclaw/openclaw.json`:
 Notes:
 
 - This plugin should own both `memory` and `contextEngine`. Do not assign only one of them.
+- `openclaw plugins install` may auto-switch `contextEngine` and still leave `memory` unchanged. Verify both slots after installation.
 - The plugin id is `libravdb-memory`. The npm package name used at install time is `@xdarkicex/openclaw-memory-libravdb`.
 - On newer OpenClaw versions, the plugin also registers a memory runtime bridge so the built-in `memory_search` tool can query libraVDB through the same sidecar-backed retrieval path.
 - On newer OpenClaw versions, the plugin also listens for `before_reset` and `session_end` so it can send best-effort lifecycle hints into the sidecar.
 - Those hints are journaled internally by the sidecar and can be inspected with `openclaw memory journal` without exposing them to normal memory export or recall.
-- The journal keeps only a bounded number of newest entries. Override that cap with `plugins.configs.libravdb-memory.lifecycleJournalMaxEntries` if you need a different retention window.
+- The journal keeps only a bounded number of newest entries. Override that cap with `plugins.entries.libravdb-memory.config.lifecycleJournalMaxEntries` if you need a different retention window.
 - The plugin does not currently register `registerMemoryFlushPlan`; transcript ingest and compaction remain owned by the context-engine lifecycle and the sidecar.
 
 Without a slot entry, OpenClaw's default memory can continue to run in parallel.
@@ -252,6 +256,13 @@ Run:
 
 ```bash
 openclaw memory status
+```
+
+Also check:
+
+```bash
+brew services list
+openclaw plugins list
 ```
 
 Expected output shape:
@@ -273,6 +284,8 @@ Interpretation:
 - `Sidecar=running` means the local `libravdbd` daemon answered JSON-RPC `health`.
 - `Gate threshold=0.35` confirms the default gating scalar boundary is active.
 - `Abstractive model=not provisioned` is acceptable. The system degrades to extractive compaction.
+
+If `openclaw memory status` is unavailable because your host excludes the bundled `memory` CLI surface via `plugins.allow`, use `openclaw plugins list` plus your daemon service status instead.
 
 ## Contributor Install
 

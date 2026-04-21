@@ -36,6 +36,10 @@ If you use the OpenClaw.ai plugin UI instead of the CLI, install the same
 package and then assign the plugin id `libravdb-memory` to both the `memory`
 and `contextEngine` slots.
 
+Current install note:
+
+- On current OpenClaw builds, `openclaw plugins install` may auto-switch `contextEngine` but leave `memory` unchanged. Always verify both slots after install.
+
 Activate the plugin in `~/.openclaw/openclaw.json`:
 
 ```json
@@ -44,23 +48,13 @@ Activate the plugin in `~/.openclaw/openclaw.json`:
     "slots": {
       "memory": "libravdb-memory",
       "contextEngine": "libravdb-memory"
-    }
-  }
-}
-```
-
-If you run the daemon on a non-default endpoint, add a plugin config:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "libravdb-memory",
-      "contextEngine": "libravdb-memory"
     },
-    "configs": {
+    "entries": {
       "libravdb-memory": {
-        "sidecarPath": "unix:/Users/<you>/.clawdb/run/libravdb.sock"
+        "enabled": true,
+        "config": {
+          "sidecarPath": "auto"
+        }
       }
     }
   }
@@ -167,11 +161,20 @@ After the plugin and daemon are both in place, run:
 openclaw memory status
 ```
 
+Also verify:
+
+```bash
+brew services list
+openclaw plugins list
+```
+
 Healthy output should show that:
 
 - the daemon answered the local health check
 - the memory slot is active
 - the plugin can read stored counts and runtime settings
+
+If `openclaw memory status` is unavailable because your host excludes the bundled `memory` CLI surface via `plugins.allow`, use `openclaw plugins list` plus `brew services list` instead.
 
 If OpenClaw cannot reach the daemon, verify the endpoint first:
 

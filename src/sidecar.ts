@@ -122,7 +122,7 @@ class SupervisorSocket implements SidecarSocket {
   private readonly connectOnce = new Set<CloseHandler>();
   private readonly errorOnce = new Set<ErrorHandler>();
   private current?: SidecarSocket;
-  private encoding = "utf8";
+  private encoding?: string;
   private generation = 0;
 
   bind(socket: SidecarSocket): void {
@@ -130,7 +130,9 @@ class SupervisorSocket implements SidecarSocket {
     this.generation += 1;
     const generation = this.generation;
 
-    socket.setEncoding(this.encoding);
+    if (this.encoding) {
+      socket.setEncoding(this.encoding);
+    }
     socket.on("data", (chunk) => {
       if (generation !== this.generation) {
         return;

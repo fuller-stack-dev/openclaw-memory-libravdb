@@ -10,7 +10,7 @@ test("manifest and package metadata satisfy checklist structure", async () => {
   const pkg = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"));
   const hookMd = await readFile(path.join(repoRoot, "HOOK.md"), "utf8");
 
-  assert.equal(manifest.kind, "context-engine");
+  assert.deepEqual(manifest.kind, ["memory", "context-engine"]);
   assert.equal(manifest.configSchema.additionalProperties, false);
   assert.deepEqual(
     Object.keys(manifest).sort(),
@@ -32,7 +32,7 @@ test("source checklist invariants are present in host code", async () => {
 
   assert.match(indexTs, /openclaw\/plugin-sdk\/plugin-entry/);
   assert.match(indexTs, /api\.pluginConfig/);
-  assert.match(indexTs, /kind:\s*"context-engine"/);
+  assert.match(indexTs, /kind:\s*\["memory",\s*"context-engine"\]/);
   assert.match(indexTs, /registerContextEngine\("libravdb-memory"/);
   assert.match(indexTs, /registerMemoryPromptSection/);
   assert.match(indexTs, /registerMemoryRuntime\?\.\(/);

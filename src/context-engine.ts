@@ -20,6 +20,33 @@ export function buildContextEngineFactory(
   recallCache: RecallCache<SearchResult>,
   logger: LoggerLike = console,
 ) {
+  function buildCompactSessionRequest(args: {
+    sessionId: string;
+    force?: boolean;
+    targetSize?: number;
+    tokenBudget?: number;
+  }): Partial<CompactSessionRequest> {
+    // OpenClaw core now requests budget-style compaction using tokenBudget,
+    // but the current LibraVDB compact_session wire contract still expects
+    // targetSize. Use tokenBudget as the compatibility target so overflow and
+    // timeout retries still compact toward the host's requested prompt budget.
+    const targetSize = args.targetSize ?? args.tokenBudget;
+    return {
+      sessionId: args.sessionId,
+      force: args.force,
+      ...(typeof targetSize === "number" ? { targetSize } : {}),
+      ...(typeof cfg.continuityMinTurns === "number"
+        ? { continuityMinTurns: cfg.continuityMinTurns }
+        : {}),
+      ...(typeof cfg.continuityTailBudgetTokens === "number"
+        ? { continuityTailBudgetTokens: cfg.continuityTailBudgetTokens }
+        : {}),
+      ...(typeof cfg.continuityPriorContextTokens === "number"
+        ? { continuityPriorContextTokens: cfg.continuityPriorContextTokens }
+        : {}),
+    };
+  }
+
   return {
     info: { id: "libravdb-memory", name: "LibraVDB Memory", ownsCompaction: true },
     ownsCompaction: true,
@@ -122,17 +149,19 @@ export function buildContextEngineFactory(
       });
       return resp;
     },
-    async compact(args: { sessionId: string; force?: boolean; targetSize?: number }) {
+    async compact(args: {
+      sessionId: string;
+      force?: boolean;
+      targetSize?: number;
+      tokenBudget?: number;
+    }) {
+      const request = buildCompactSessionRequest(args);
       const kernel = runtime.getKernel();
       if (kernel) {
-        return await kernel.compactSession({
-          sessionId: args.sessionId,
-          force: args.force,
-          targetSize: args.targetSize,
-        });
+        return await kernel.compactSession(request);
       }
       const rpc = await runtime.getRpc();
-      return await rpc.call("compact_session", args);
+      return await rpc.call("compact_session", request);
     },
     async afterTurn(args: {
       sessionId: string;
@@ -141,6 +170,8 @@ export function buildContextEngineFactory(
       messages: Array<{ role: string; content: string; id?: string }>;
       prePromptMessageCount?: number;
       isHeartbeat?: boolean;
+      tokenBudget?: number;
+      runtimeContext?: Record<string, unknown>;
     }) {
       const kernel = runtime.getKernel();
       if (kernel) {

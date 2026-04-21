@@ -8,6 +8,10 @@ export type RpcGetter = () => Promise<RpcClient>;
 export const DEFAULT_RPC_TIMEOUT_MS = 30000;
 export const STARTUP_HEALTH_TIMEOUT_MS = 2000;
 
+export function resolveStartupHealthTimeoutMs(cfg: PluginConfig): number {
+  return Math.max(STARTUP_HEALTH_TIMEOUT_MS, cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS);
+}
+
 export interface LifecycleHint {
   hook: "before_reset" | "session_end";
   reason?: string;
@@ -49,7 +53,7 @@ export function createPluginRuntime(
           timeoutMs: cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS,
         });
         const health = await rpc.call<{ ok?: boolean; message?: string }>("health", {}, {
-          timeoutMs: STARTUP_HEALTH_TIMEOUT_MS,
+          timeoutMs: resolveStartupHealthTimeoutMs(cfg),
         });
         if (!health.ok) {
           try {

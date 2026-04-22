@@ -164,17 +164,22 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(assembled.debug?.recoveryTriggerFired, true);
 });
 
-test("compact forwards target size and force flags", async () => {
+test("compact maps host budget requests onto legacy sidecar fields", async () => {
   const rpc = new StaticContractRpc();
   const recallCache = createRecallCache<SearchResult>();
-  const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    continuityMinTurns: 4,
+    continuityTailBudgetTokens: 640,
+    continuityPriorContextTokens: 320,
+  };
 
   const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
 
   await context.compact({
     sessionId: "test-session",
     force: true,
-    targetSize: 2048,
+    tokenBudget: 2048,
   });
 
   const params = rpc.getLastCall("compact_session");
@@ -182,6 +187,9 @@ test("compact forwards target size and force flags", async () => {
   assert.equal(params.sessionId, "test-session");
   assert.equal(params.force, true);
   assert.equal(params.targetSize, 2048);
+  assert.equal(params.continuityMinTurns, 4);
+  assert.equal(params.continuityTailBudgetTokens, 640);
+  assert.equal(params.continuityPriorContextTokens, 320);
 });
 
 test("afterTurn forwards message arrays and pre-prompt counts correctly", async () => {

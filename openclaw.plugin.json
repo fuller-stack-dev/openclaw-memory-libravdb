@@ -2,17 +2,35 @@
   "id": "libravdb-memory",
   "name": "LibraVDB Memory",
   "description": "Persistent vector memory with three-tier hybrid scoring",
-  "version": "1.4.9",
-  "kind": ["memory", "context-engine"],
+  "version": "1.4.10",
+  "kind": [
+    "memory",
+    "context-engine"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "dbPath": { "type": "string" },
-      "sidecarPath": { "type": "string" },
-      "useSessionSummarySearchExperiment": { "type": "boolean" },
-      "embeddingRuntimePath": { "type": "string" },
-      "embeddingBackend": { "type": "string", "enum": ["bundled", "onnx-local", "custom-local"] },
+      "dbPath": {
+        "type": "string"
+      },
+      "sidecarPath": {
+        "type": "string"
+      },
+      "useSessionSummarySearchExperiment": {
+        "type": "boolean"
+      },
+      "embeddingRuntimePath": {
+        "type": "string"
+      },
+      "embeddingBackend": {
+        "type": "string",
+        "enum": [
+          "bundled",
+          "onnx-local",
+          "custom-local"
+        ]
+      },
       "embeddingProfile": {
         "type": "string",
         "default": "all-minilm-l6-v2"
@@ -21,22 +39,60 @@
         "type": "string",
         "default": "all-minilm-l6-v2"
       },
-      "embeddingModelPath": { "type": "string" },
-      "embeddingTokenizerPath": { "type": "string" },
-      "embeddingDimensions": { "type": "number" },
-      "embeddingNormalize": { "type": "boolean" },
-      "summarizerBackend": { "type": "string", "enum": ["bundled", "onnx-local", "ollama-local", "custom-local"] },
-      "summarizerProfile": { "type": "string" },
-      "summarizerRuntimePath": { "type": "string" },
-      "summarizerModelPath": { "type": "string" },
-      "summarizerTokenizerPath": { "type": "string" },
-      "summarizerModel": { "type": "string" },
-      "summarizerEndpoint": { "type": "string" },
-      "sessionTTL": { "type": "number" },
-      "topK": { "type": "number" },
-      "alpha": { "type": "number" },
-      "beta": { "type": "number" },
-      "gamma": { "type": "number" },
+      "embeddingModelPath": {
+        "type": "string"
+      },
+      "embeddingTokenizerPath": {
+        "type": "string"
+      },
+      "embeddingDimensions": {
+        "type": "number"
+      },
+      "embeddingNormalize": {
+        "type": "boolean"
+      },
+      "summarizerBackend": {
+        "type": "string",
+        "enum": [
+          "bundled",
+          "onnx-local",
+          "ollama-local",
+          "custom-local"
+        ]
+      },
+      "summarizerProfile": {
+        "type": "string"
+      },
+      "summarizerRuntimePath": {
+        "type": "string"
+      },
+      "summarizerModelPath": {
+        "type": "string"
+      },
+      "summarizerTokenizerPath": {
+        "type": "string"
+      },
+      "summarizerModel": {
+        "type": "string"
+      },
+      "summarizerEndpoint": {
+        "type": "string"
+      },
+      "sessionTTL": {
+        "type": "number"
+      },
+      "topK": {
+        "type": "number"
+      },
+      "alpha": {
+        "type": "number"
+      },
+      "beta": {
+        "type": "number"
+      },
+      "gamma": {
+        "type": "number"
+      },
       "ingestionGateThreshold": {
         "type": "number",
         "default": 0.35
@@ -47,7 +103,9 @@
       },
       "markdownIngestionRoots": {
         "type": "array",
-        "items": { "type": "string" }
+        "items": {
+          "type": "string"
+        }
       },
       "markdownIngestionObsidianEnabled": {
         "type": "boolean",
@@ -55,15 +113,21 @@
       },
       "markdownIngestionObsidianRoots": {
         "type": "array",
-        "items": { "type": "string" }
+        "items": {
+          "type": "string"
+        }
       },
       "markdownIngestionObsidianInclude": {
         "type": "array",
-        "items": { "type": "string" }
+        "items": {
+          "type": "string"
+        }
       },
       "markdownIngestionObsidianExclude": {
         "type": "array",
-        "items": { "type": "string" }
+        "items": {
+          "type": "string"
+        }
       },
       "markdownIngestionObsidianDebounceMs": {
         "type": "number",
@@ -71,11 +135,15 @@
       },
       "markdownIngestionInclude": {
         "type": "array",
-        "items": { "type": "string" }
+        "items": {
+          "type": "string"
+        }
       },
       "markdownIngestionExclude": {
         "type": "array",
-        "items": { "type": "string" }
+        "items": {
+          "type": "string"
+        }
       },
       "markdownIngestionCollection": {
         "type": "string",
@@ -103,16 +171,38 @@
         "type": "object",
         "additionalProperties": false,
         "default": {
-          "w1c": 0.35, "w2c": 0.40, "w3c": 0.25,
-          "w1t": 0.40, "w2t": 0.35, "w3t": 0.25
+          "w1c": 0.35,
+          "w2c": 0.4,
+          "w3c": 0.25,
+          "w1t": 0.4,
+          "w2t": 0.35,
+          "w3t": 0.25
         },
         "properties": {
-          "w1c": { "type": "number", "default": 0.35 },
-          "w2c": { "type": "number", "default": 0.40 },
-          "w3c": { "type": "number", "default": 0.25 },
-          "w1t": { "type": "number", "default": 0.40 },
-          "w2t": { "type": "number", "default": 0.35 },
-          "w3t": { "type": "number", "default": 0.25 }
+          "w1c": {
+            "type": "number",
+            "default": 0.35
+          },
+          "w2c": {
+            "type": "number",
+            "default": 0.4
+          },
+          "w3c": {
+            "type": "number",
+            "default": 0.25
+          },
+          "w1t": {
+            "type": "number",
+            "default": 0.4
+          },
+          "w2t": {
+            "type": "number",
+            "default": 0.35
+          },
+          "w3t": {
+            "type": "number",
+            "default": 0.25
+          }
         }
       },
       "gatingTechNorm": {
@@ -132,21 +222,42 @@
         "default": 0.5,
         "description": "Controls how much summary confidence affects retrieval score. 0 ignores summary quality and 1 fully suppresses zero-confidence summaries."
       },
-      "recencyLambdaSession": { "type": "number" },
-      "recencyLambdaUser": { "type": "number" },
-      "recencyLambdaGlobal": { "type": "number" },
-      "tokenBudgetFraction": { "type": "number" },
-      "compactThreshold": { "type": "number" },
+      "recencyLambdaSession": {
+        "type": "number"
+      },
+      "recencyLambdaUser": {
+        "type": "number"
+      },
+      "recencyLambdaGlobal": {
+        "type": "number"
+      },
+      "tokenBudgetFraction": {
+        "type": "number"
+      },
+      "compactThreshold": {
+        "type": "number"
+      },
       "compactSessionTokenBudget": {
         "type": "number",
         "default": 2000,
         "description": "Auto-trigger compaction when the session accumulates this many tokens since the last compaction. Set to 0 to disable auto-compaction."
       },
-      "ollamaUrl": { "type": "string" },
-      "compactModel": { "type": "string" },
-      "rpcTimeoutMs": { "type": "number", "default": 30000 },
-      "maxRetries": { "type": "number" },
-      "logLevel": { "type": "string" }
+      "ollamaUrl": {
+        "type": "string"
+      },
+      "compactModel": {
+        "type": "string"
+      },
+      "rpcTimeoutMs": {
+        "type": "number",
+        "default": 30000
+      },
+      "maxRetries": {
+        "type": "number"
+      },
+      "logLevel": {
+        "type": "string"
+      }
     }
   }
 }

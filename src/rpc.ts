@@ -43,29 +43,72 @@ export class RpcClient {
       }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer, decodeResult: codec.decodeResult });
-      try {
-        const envelope = new (RpcRequest as any)({
-          id,
-          method,
-          params: codec.encodeParams(params),
-        });
-        const payload = Buffer.from(envelope.toBinary());
-        const header = Buffer.alloc(4);
-        header.writeUInt32BE(payload.byteLength, 0);
+      const envelope = new (RpcRequest as any)({
+        id,
+        method,
+        params: codec.encodeParams(params),
+      });
+      const payload = Buffer.from(envelope.toBinary());
+      const header = Buffer.alloc(4);
+      header.writeUInt32BE(payload.byteLength, 0);
 
-        const chunks: Buffer[] = [];
-        if (!this.sentMagic) {
-          chunks.push(Buffer.from([0x02]));
-          this.sentMagic = true;
-        }
-        chunks.push(header, payload);
-
-        this.socket.write(Buffer.concat(chunks));
-      } catch (error) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
+      const chunks: Buffer[] = [];
+      if (!this.sentMagic) {
+        chunks.push(Buffer.from([0x02]));
+        this.sentMagic = true;
       }
+      chunks.push(header, payload);
+      const frame = Buffer.concat(chunks);
+      const send = (allowReconnectRetry: boolean) => {
+        try {
+          this.socket.write(frame);
+        } catch (error) {
+          if (allowReconnectRetry && isReconnectableSocketGap(error)) {
+            void this.waitForReconnect(timeoutMs)
+              .then(() => send(false))
+              .catch((reconnectError) => {
+                clearTimeout(timer);
+                this.pending.delete(id);
+                reject(
+                  reconnectError instanceof Error
+                    ? reconnectError
+                    : new Error(String(reconnectError)),
+                );
+              });
+            return;
+          }
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+
+      send(true);
+    });
+  }
+
+  private async waitForReconnect(timeoutMs: number): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`Sidecar reconnect timed out (${timeoutMs}ms)`));
+      }, timeoutMs);
+
+      this.socket.once("connect", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      });
+
+      this.socket.once("error", (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
     });
   }
 
@@ -145,4 +188,8 @@ export class RpcClient {
       pending.reject(error);
     }
   }
+}
+
+function isReconnectableSocketGap(error: unknown): boolean {
+  return error instanceof Error && /Sidecar socket unavailable/i.test(error.message);
 }

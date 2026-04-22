@@ -5,6 +5,7 @@ import {
   AssembleContextInternalResponse,
   AssembleContextInternalRequest,
   AfterTurnKernelRequest,
+  HealthResponse,
   IngestMessageKernelRequest,
   RpcRequest,
   RpcResponse,
@@ -75,6 +76,44 @@ class FakeSocket implements SidecarSocket {
       handler(error);
     }
     this.errorOnce = [];
+  }
+}
+
+class ReconnectingSocket extends FakeSocket {
+  private available = false;
+  private readonly reconnectHandlers: Array<() => void> = [];
+  private reconnectErrorHandlers: Array<(error: Error) => void> = [];
+
+  override once(event: "connect" | "error", handler: (() => void) | ((error: Error) => void)): void {
+    if (event === "connect") {
+      if (this.available) {
+        (handler as () => void)();
+        return;
+      }
+      this.reconnectHandlers.push(handler as () => void);
+      return;
+    }
+    this.reconnectErrorHandlers.push(handler as (error: Error) => void);
+  }
+
+  override write(chunk: Buffer | string): void {
+    if (!this.available) {
+      throw new Error("Sidecar socket unavailable");
+    }
+    super.write(chunk);
+  }
+
+  emitConnect(): void {
+    this.available = true;
+    for (const handler of this.reconnectHandlers.splice(0)) {
+      handler();
+    }
+  }
+
+  emitReconnectError(error: Error): void {
+    for (const handler of this.reconnectErrorHandlers.splice(0)) {
+      handler(error);
+    }
   }
 }
 
@@ -165,6 +204,28 @@ test("RpcClient preserves empty result arrays and debug payloads", async () => {
   assert.equal(result.estimatedTokens, 12);
   assert.equal(result.systemPromptAddition, "sys");
   assert.ok(result.debug !== undefined, "debug payload should be preserved");
+});
+
+test("RpcClient waits for reconnect when the supervisor socket is temporarily unavailable", async () => {
+  const socket = new ReconnectingSocket();
+  const client = new RpcClient(socket, { timeoutMs: 100 });
+
+  const pending = client.call<{ ok?: boolean }>("health", {});
+
+  assert.equal(socket.writes.length, 0);
+  socket.emitConnect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(socket.writes.length, 1);
+
+  const request = RpcRequest.fromBinary(parseClientFrame(socket.writes[0]!));
+  const response = new (RpcResponse as any)({
+    id: request.id,
+    result: HealthResponse.fromJson({ ok: true }).toBinary(),
+  });
+  socket.emitData(frameServerPayload(response.toBinary()));
+
+  const result = await pending;
+  assert.equal(result.ok, true);
 });
 
 test("normalizeKernelMessages flattens rich message blocks before assemble encoding", () => {

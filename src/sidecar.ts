@@ -374,7 +374,11 @@ export function daemonProvisioningHint(): string {
   return "If you installed the npm package, install and start libravdbd separately; the package does not provision the daemon binary, ONNX Runtime, or model assets.";
 }
 
-export function defaultEndpoint(platform = process.platform, homeDir = os.homedir()): string {
+export function defaultEndpoint(
+  platform = process.platform,
+  homeDir = os.homedir(),
+  pathExists: (path: string) => boolean = fs.existsSync,
+): string {
   // Honour the daemon's own env var first (set by Homebrew LaunchAgent / systemd unit).
   const envEndpoint = process.env.LIBRAVDB_RPC_ENDPOINT?.trim();
   if (envEndpoint && isConfiguredEndpoint(envEndpoint)) {
@@ -398,7 +402,7 @@ export function defaultEndpoint(platform = process.platform, homeDir = os.homedi
   for (const dir of candidateDirs) {
     const sockPath = path.join(dir, sockName);
     try {
-      if (fs.existsSync(sockPath)) {
+      if (pathExists(sockPath)) {
         return `unix:${sockPath}`;
       }
     } catch {

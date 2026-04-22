@@ -215,7 +215,7 @@ test("normalizeKernelMessage prevents object-string coercion in ingest and after
   assert.equal(afterTurnRoundtrip.messages[0]?.content, 'Done\n[tool:memory_search] {"q":"needle"}');
 });
 
-test("normalizeAssembleResult converts kernel string messages into OpenClaw text blocks", () => {
+test("normalizeAssembleResult preserves kernel string messages for existing callers", () => {
   const normalized = normalizeAssembleResult({
     messages: [{ role: "assistant", content: "OK", id: "m1" }],
     estimatedTokens: 7,
@@ -225,7 +225,7 @@ test("normalizeAssembleResult converts kernel string messages into OpenClaw text
   assert.deepEqual(normalized.messages, [
     {
       role: "assistant",
-      content: [{ type: "text", text: "OK" }],
+      content: "OK",
       id: "m1",
     },
   ]);
@@ -233,7 +233,7 @@ test("normalizeAssembleResult converts kernel string messages into OpenClaw text
   assert.equal(normalized.systemPromptAddition, "sys");
 });
 
-test("normalizeAssembleResult coerces non-replay-safe roles to assistant text messages", () => {
+test("normalizeAssembleResult coerces non-replay-safe roles to assistant string messages", () => {
   const normalized = normalizeAssembleResult({
     messages: [{ role: "toolResult", content: "tool output", id: "m2" }],
   });
@@ -241,7 +241,7 @@ test("normalizeAssembleResult coerces non-replay-safe roles to assistant text me
   assert.deepEqual(normalized.messages, [
     {
       role: "assistant",
-      content: [{ type: "text", text: "tool output" }],
+      content: "tool output",
       id: "m2",
     },
   ]);

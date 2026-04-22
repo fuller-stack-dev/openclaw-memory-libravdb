@@ -22,7 +22,7 @@ type KernelCompatibleMessage = {
 
 type OpenClawCompatibleMessage = {
   role: string;
-  content: Array<{ type: "text"; text: string }>;
+  content: string;
   id?: string;
 };
 
@@ -102,7 +102,7 @@ export function normalizeAssembleResult(result: {
   const messages = Array.isArray(result.messages)
     ? result.messages.map((message) => ({
         role: message.role === "user" ? "user" : "assistant",
-        content: [{ type: "text" as const, text: normalizeKernelContent(message.content) }],
+        content: normalizeKernelContent(message.content),
         ...(typeof message.id === "string" ? { id: message.id } : {}),
       }))
     : [];

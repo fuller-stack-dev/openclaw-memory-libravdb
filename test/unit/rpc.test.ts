@@ -152,7 +152,10 @@ test("RpcClient preserves empty result arrays and debug payloads", async () => {
   socket.emitData(frameServerPayload(response.toBinary()));
 
   const result = await pending;
-  assert.deepEqual(result.messages ?? [], []);
+  assert.ok(Array.isArray(result.messages), "messages should be preserved as an array");
+  assert.deepEqual(result.messages, []);
+  assert.equal(result.estimatedTokens, 12);
+  assert.equal(result.systemPromptAddition, "sys");
   assert.ok(result.debug !== undefined, "debug payload should be preserved");
 });
 

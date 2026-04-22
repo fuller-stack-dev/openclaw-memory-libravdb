@@ -142,7 +142,8 @@ Install and start `libravdbd` separately for the same user account that runs Ope
 
 Default endpoints:
 
-- macOS/Linux: `unix:$HOME/.clawdb/run/libravdb.sock`
+- Homebrew on macOS: `unix:/opt/homebrew/var/clawdb/run/libravdb.sock`
+- macOS/Linux user-local installs: `unix:$HOME/.clawdb/run/libravdb.sock`
 - Windows: `tcp:127.0.0.1:37421`
 
 If you run the daemon on a different endpoint, set `plugins.configs.libravdb-memory.sidecarPath` in `~/.openclaw/openclaw.json`.
@@ -174,6 +175,18 @@ Homebrew users should normally install from the published tap:
 brew tap xDarkicex/homebrew-openclaw-libravdb-memory
 brew install libravdbd
 brew services start libravdbd
+```
+
+With `sidecarPath: "auto"`, Homebrew installs on Apple Silicon should resolve to:
+
+```text
+unix:/opt/homebrew/var/clawdb/run/libravdb.sock
+```
+
+User-local installs still default to:
+
+```text
+unix:$HOME/.clawdb/run/libravdb.sock
 ```
 
 The daemon release pipeline generates a publish-ready `libravdbd.rb` formula asset for release assets named:

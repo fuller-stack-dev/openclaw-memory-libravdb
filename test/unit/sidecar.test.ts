@@ -52,6 +52,16 @@ test("defaultEndpoint uses unix sockets on unix and localhost TCP on windows", (
   }
 });
 
+test("defaultEndpoint prefers the Homebrew socket when the user-local socket is absent", () => {
+  const endpoint = defaultEndpoint(
+    "darwin",
+    "/Users/demo",
+    (candidate) => candidate === "/opt/homebrew/var/clawdb/run/libravdb.sock",
+  );
+
+  assert.equal(endpoint, "unix:/opt/homebrew/var/clawdb/run/libravdb.sock");
+});
+
 test("computeBackoffMs applies capped exponential backoff", () => {
   assert.equal(computeBackoffMs(0), 500);
   assert.equal(computeBackoffMs(1), 1000);

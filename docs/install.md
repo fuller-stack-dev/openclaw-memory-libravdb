@@ -67,13 +67,22 @@ If you run the daemon on a non-default endpoint, add a plugin config:
 }
 ```
 
+When `sidecarPath` is set to `"auto"`, the plugin resolves endpoints in this order on macOS/Linux:
+
+1. `LIBRAVDB_RPC_ENDPOINT` if it is set to a valid daemon endpoint
+2. `$HOME/.clawdb/run/libravdb.sock` if it exists
+3. `/opt/homebrew/var/clawdb/run/libravdb.sock` if it exists
+4. `/usr/local/var/clawdb/run/libravdb.sock` if it exists
+5. fallback to `$HOME/.clawdb/run/libravdb.sock`
+
 ## Sidecar Daemon Install
 
 The daemon owns the local database, embeddings, and JSON-RPC endpoint.
 
 Default endpoints:
 
-- macOS/Linux: `unix:$HOME/.clawdb/run/libravdb.sock`
+- Homebrew on macOS: `unix:/opt/homebrew/var/clawdb/run/libravdb.sock`
+- macOS/Linux user-local installs: `unix:$HOME/.clawdb/run/libravdb.sock`
 - Windows: `tcp:127.0.0.1:37421`
 
 Default data path:

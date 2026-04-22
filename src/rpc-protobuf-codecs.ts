@@ -71,6 +71,19 @@ function normalizeSearchTextResponse(bytes: Uint8Array): SearchTextResponse {
   return response;
 }
 
+function normalizeAssembleContextInternalResponse(
+  bytes: Uint8Array,
+): AssembleContextInternalResponse {
+  const response = decodeProtobufResult<AssembleContextInternalResponse>(
+    AssembleContextInternalResponse,
+    bytes,
+  );
+  if (!Array.isArray(response.messages)) {
+    response.messages = [];
+  }
+  return response;
+}
+
 function normalizeExcludeByCollection(
   value: Record<string, unknown> | undefined,
 ): Record<string, StringList> {
@@ -248,7 +261,7 @@ export const rpcProtobufCodecs = {
     AssembleContextInternalResponse
   >(
     (params) => encodeMessage(AssembleContextInternalRequest, params),
-    (bytes) => decodeProtobufResult<AssembleContextInternalResponse>(AssembleContextInternalResponse, bytes),
+    normalizeAssembleContextInternalResponse,
   ),
   compact_session: codec<CompactSessionRequest, CompactSessionResponse>(
     (params) => encodeMessage(CompactSessionRequest, params),

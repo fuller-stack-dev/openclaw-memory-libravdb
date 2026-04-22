@@ -14,6 +14,129 @@ import {
 } from "./generated/libravdb/ipc/v1/rpc_pb.js";
 import { resolveDurableNamespace } from "./durable-namespace.js";
 
+type KernelCompatibleMessage = {
+  role: string;
+  content: string;
+  id?: string;
+};
+
+type OpenClawCompatibleMessage = {
+  role: string;
+  content: string;
+  id?: string;
+};
+
+type OpenClawCompatibleAssembleResult = {
+  messages: OpenClawCompatibleMessage[];
+  estimatedTokens: number;
+  systemPromptAddition: string;
+  debug?: AssembleContextInternalResponse["debug"];
+};
+
+function describeUnexpectedContent(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return String(value);
+  }
+}
+
+function stringifyKernelBlock(block: unknown): string {
+  if (!block || typeof block !== "object") {
+    return "";
+  }
+  const record = block as Record<string, unknown>;
+  switch (record.type) {
+    case "text":
+      return typeof record.text === "string" ? record.text : "";
+    case "thinking":
+      return typeof record.thinking === "string" ? record.thinking : "";
+    case "toolCall": {
+      const name = typeof record.name === "string" ? record.name : "tool";
+      const args = record.arguments;
+      let renderedArgs = "";
+      if (typeof args === "string") {
+        renderedArgs = args;
+      } else if (args !== undefined) {
+        try {
+          renderedArgs = JSON.stringify(args);
+        } catch {
+          renderedArgs = String(args);
+        }
+      }
+      return renderedArgs ? `[tool:${name}] ${renderedArgs}` : `[tool:${name}]`;
+    }
+    case "image":
+      return "[image omitted]";
+    default:
+      console.warn("[libravdb] unsupported kernel content block", {
+        type: record.type,
+        block: describeUnexpectedContent(record),
+      });
+      return typeof record.text === "string" ? record.text : "";
+  }
+}
+
+function normalizeKernelContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    console.warn("[libravdb] unexpected kernel content shape", {
+      kind: typeof content,
+      value: describeUnexpectedContent(content),
+    });
+    return "";
+  }
+  return content.map(stringifyKernelBlock).filter((part) => part.length > 0).join("\n");
+}
+
+export function normalizeKernelMessage(message: {
+  role: string;
+  content: unknown;
+  id?: string;
+}): KernelCompatibleMessage {
+  return {
+    role: message.role,
+    content: normalizeKernelContent(message.content),
+    ...(typeof message.id === "string" ? { id: message.id } : {}),
+  };
+}
+
+export function normalizeKernelMessages(
+  messages: Array<{ role: string; content: unknown; id?: string }>,
+): KernelCompatibleMessage[] {
+  return messages.map((message) => normalizeKernelMessage(message));
+}
+
+export function normalizeAssembleResult(result: {
+  messages?: Array<{ role: string; content?: unknown; id?: string }>;
+  estimatedTokens?: number;
+  systemPromptAddition?: string;
+  debug?: AssembleContextInternalResponse["debug"];
+}): OpenClawCompatibleAssembleResult {
+  const messages = Array.isArray(result.messages)
+    ? result.messages.map((message) => ({
+        // OpenClaw replay only expects conversational turns here, so assemble output
+        // is collapsed to user/assistant even though normalizeKernelMessage preserves
+        // richer inbound roles. If kernel.assembleContext starts emitting other roles,
+        // this coercion point is where that contract needs to be revisited.
+        role: message.role === "user" ? "user" : "assistant",
+        content: normalizeKernelContent(message.content),
+        ...(typeof message.id === "string" ? { id: message.id } : {}),
+      }))
+    : [];
+  return {
+    messages,
+    estimatedTokens:
+      typeof result.estimatedTokens === "number" ? result.estimatedTokens : 0,
+    systemPromptAddition:
+      typeof result.systemPromptAddition === "string" ? result.systemPromptAddition : "",
+    ...(result.debug != null ? { debug: result.debug } : {}),
+  };
+}
+
 export function buildContextEngineFactory(
   runtime: PluginRuntime,
   cfg: PluginConfig,
@@ -43,40 +166,45 @@ export function buildContextEngineFactory(
       const rpc = await runtime.getRpc();
       return await rpc.call("bootstrap_session_kernel", args);
     },
-    async ingest(args: { sessionId: string; sessionKey?: string; userId?: string; message: { role: string; content: string; id?: string }; isHeartbeat?: boolean }) {
+    async ingest(args: { sessionId: string; sessionKey?: string; userId?: string; message: { role: string; content: unknown; id?: string }; isHeartbeat?: boolean }) {
+      const message = normalizeKernelMessage(args.message);
       const kernel = runtime.getKernel();
       if (kernel) {
         return await kernel.ingestMessage({
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
           userId: args.userId,
-          message: args.message,
+          message,
           isHeartbeat: args.isHeartbeat,
         });
       }
       const rpc = await runtime.getRpc();
-      return await rpc.call("ingest_message_kernel", args);
+      return await rpc.call("ingest_message_kernel", {
+        ...args,
+        message,
+      });
     },
     async assemble(args: {
       sessionId: string;
       sessionKey?: string;
       userId?: string;
-      messages: Array<{ role: string; content: string; id?: string }>;
+      messages: Array<{ role: string; content: unknown; id?: string }>;
       tokenBudget: number;
       prompt?: string;
-    }): Promise<AssembleContextInternalResponse> {
+    }): Promise<OpenClawCompatibleAssembleResult> {
+      const messages = normalizeKernelMessages(args.messages);
       const kernel = runtime.getKernel();
       if (kernel) {
-        return await kernel.assembleContext({
+        return normalizeAssembleResult(await kernel.assembleContext({
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
           userId: args.userId,
           queryText: args.prompt ?? "",
-          visibleMessages: args.messages,
+          visibleMessages: messages,
           tokenBudget: args.tokenBudget,
           config: {},
           emitDebug: true
-        });
+        }));
       }
 
       const rpc = await runtime.getRpc();
@@ -84,7 +212,7 @@ export function buildContextEngineFactory(
         sessionId: args.sessionId,
         sessionKey: args.sessionKey,
         userId: args.userId,
-        messages: args.messages,
+        messages,
         tokenBudget: args.tokenBudget,
         prompt: args.prompt,
         emitDebug: true,
@@ -120,7 +248,7 @@ export function buildContextEngineFactory(
           ingestionGateThreshold: cfg.ingestionGateThreshold,
         },
       });
-      return resp;
+      return normalizeAssembleResult(resp);
     },
     async compact(args: { sessionId: string; force?: boolean; targetSize?: number }) {
       const kernel = runtime.getKernel();
@@ -138,23 +266,27 @@ export function buildContextEngineFactory(
       sessionId: string;
       sessionKey?: string;
       userId?: string;
-      messages: Array<{ role: string; content: string; id?: string }>;
+      messages: Array<{ role: string; content: unknown; id?: string }>;
       prePromptMessageCount?: number;
       isHeartbeat?: boolean;
     }) {
+      const messages = normalizeKernelMessages(args.messages);
       const kernel = runtime.getKernel();
       if (kernel) {
         return await kernel.afterTurn({
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
           userId: args.userId,
-          messages: args.messages,
+          messages,
           prePromptMessageCount: args.prePromptMessageCount,
           isHeartbeat: args.isHeartbeat,
         });
       }
       const rpc = await runtime.getRpc();
-      return await rpc.call("after_turn_kernel", args);
+      return await rpc.call("after_turn_kernel", {
+        ...args,
+        messages,
+      });
     }
   };
 }

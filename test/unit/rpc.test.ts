@@ -3,10 +3,18 @@ import test from "node:test";
 
 import {
   AssembleContextInternalResponse,
+  AssembleContextInternalRequest,
+  AfterTurnKernelRequest,
+  IngestMessageKernelRequest,
   RpcRequest,
   RpcResponse,
   SearchTextResponse,
 } from "../../src/generated/libravdb/ipc/v1/rpc_pb.js";
+import {
+  normalizeAssembleResult,
+  normalizeKernelMessage,
+  normalizeKernelMessages,
+} from "../../src/context-engine.js";
 import { RpcClient } from "../../src/rpc.js";
 import type { SidecarSocket } from "../../src/types.js";
 
@@ -152,8 +160,121 @@ test("RpcClient preserves empty result arrays and debug payloads", async () => {
   socket.emitData(frameServerPayload(response.toBinary()));
 
   const result = await pending;
-  assert.deepEqual(result.messages ?? [], []);
+  assert.ok(Array.isArray(result.messages), "messages should be preserved as an array");
+  assert.deepEqual(result.messages, []);
+  assert.equal(result.estimatedTokens, 12);
+  assert.equal(result.systemPromptAddition, "sys");
   assert.ok(result.debug !== undefined, "debug payload should be preserved");
+});
+
+test("normalizeKernelMessages flattens rich message blocks before assemble encoding", () => {
+  const richMessages = normalizeKernelMessages([
+    {
+      role: "user",
+      content: [{ type: "text", text: "Reply with exactly: OK" }],
+      id: "m1",
+    },
+  ] as Array<{ role: string; content: unknown; id?: string }>);
+
+  const roundtrip = AssembleContextInternalRequest.fromBinary(
+    new AssembleContextInternalRequest({
+      sessionId: "s1",
+      messages: richMessages,
+      tokenBudget: 100,
+      prompt: "ignored",
+    }).toBinary(),
+  );
+
+  assert.equal(roundtrip.messages[0]?.content, "Reply with exactly: OK");
+});
+
+test("normalizeKernelMessage prevents object-string coercion in ingest and after-turn requests", () => {
+  const richMessage = normalizeKernelMessage({
+    role: "assistant",
+    content: [
+      { type: "text", text: "Done" },
+      { type: "toolCall", name: "memory_search", arguments: { q: "needle" } },
+    ],
+    id: "m2",
+  });
+
+  const ingestRoundtrip = IngestMessageKernelRequest.fromBinary(
+    new IngestMessageKernelRequest({
+      sessionId: "s1",
+      message: richMessage,
+    }).toBinary(),
+  );
+  assert.equal(ingestRoundtrip.message?.content, 'Done\n[tool:memory_search] {"q":"needle"}');
+
+  const afterTurnRoundtrip = AfterTurnKernelRequest.fromBinary(
+    new AfterTurnKernelRequest({
+      sessionId: "s1",
+      messages: [richMessage],
+    }).toBinary(),
+  );
+  assert.equal(afterTurnRoundtrip.messages[0]?.content, 'Done\n[tool:memory_search] {"q":"needle"}');
+});
+
+test("normalizeAssembleResult preserves kernel string messages for existing callers", () => {
+  const normalized = normalizeAssembleResult({
+    messages: [{ role: "assistant", content: "OK", id: "m1" }],
+    estimatedTokens: 7,
+    systemPromptAddition: "sys",
+  });
+
+  assert.deepEqual(normalized.messages, [
+    {
+      role: "assistant",
+      content: "OK",
+      id: "m1",
+    },
+  ]);
+  assert.equal(normalized.estimatedTokens, 7);
+  assert.equal(normalized.systemPromptAddition, "sys");
+});
+
+test("normalizeAssembleResult stringifies rich content blocks consistently", () => {
+  const normalized = normalizeAssembleResult({
+    messages: [{
+      role: "assistant",
+      content: [
+        { type: "text", text: "Done" },
+        { type: "toolCall", name: "memory_search", arguments: { q: "needle" } },
+      ],
+      id: "m-rich",
+    }],
+  });
+
+  assert.deepEqual(normalized.messages, [
+    {
+      role: "assistant",
+      content: 'Done\n[tool:memory_search] {"q":"needle"}',
+      id: "m-rich",
+    },
+  ]);
+});
+
+test("normalizeAssembleResult coerces non-replay-safe roles to assistant string messages", () => {
+  const normalized = normalizeAssembleResult({
+    messages: [{ role: "toolResult", content: "tool output", id: "m2" }],
+  });
+
+  assert.deepEqual(normalized.messages, [
+    {
+      role: "assistant",
+      content: "tool output",
+      id: "m2",
+    },
+  ]);
+});
+
+test("normalizeAssembleResult omits null debug payloads", () => {
+  const normalized = normalizeAssembleResult({
+    messages: [],
+    debug: null as any,
+  });
+
+  assert.equal("debug" in normalized, false);
 });
 
 test("RpcClient rejects on timeout", async () => {

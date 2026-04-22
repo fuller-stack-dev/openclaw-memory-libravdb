@@ -37,13 +37,15 @@ export class RpcClient {
     return await new Promise<T>((resolve, reject) => {
       const id = ++this.seq;
       const timeoutMs = callOptions.timeoutMs ?? this.options.timeoutMs;
+      const deadline = Date.now() + timeoutMs;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`RPC timeout: ${method} (${timeoutMs}ms)`));
       }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer, decodeResult: codec.decodeResult });
-      try {
+
+      const buildFrame = () => {
         const envelope = new (RpcRequest as any)({
           id,
           method,
@@ -52,20 +54,96 @@ export class RpcClient {
         const payload = Buffer.from(envelope.toBinary());
         const header = Buffer.alloc(4);
         header.writeUInt32BE(payload.byteLength, 0);
-
         const chunks: Buffer[] = [];
-        if (!this.sentMagic) {
+        const includesMagic = !this.sentMagic;
+        if (includesMagic) {
           chunks.push(Buffer.from([0x02]));
-          this.sentMagic = true;
         }
         chunks.push(header, payload);
+        return { frame: Buffer.concat(chunks), includesMagic };
+      };
 
-        this.socket.write(Buffer.concat(chunks));
-      } catch (error) {
+      const send = (allowReconnectRetry: boolean) => {
+        if (!this.pending.has(id)) {
+          return;
+        }
+        const { frame, includesMagic } = buildFrame();
+        try {
+          this.socket.write(frame);
+          if (includesMagic) {
+            this.sentMagic = true;
+          }
+        } catch (error) {
+          if (allowReconnectRetry && isReconnectableSocketGap(error)) {
+            this.sentMagic = false;
+            const remainingMs = Math.max(0, deadline - Date.now());
+            if (remainingMs <= 0) {
+              if (!this.pending.has(id)) {
+                return;
+              }
+              clearTimeout(timer);
+              this.pending.delete(id);
+              reject(new Error(`RPC timeout: ${method} (${timeoutMs}ms)`));
+              return;
+            }
+            void this.waitForReconnect(remainingMs)
+              .then(() => {
+                if (!this.pending.has(id)) {
+                  return;
+                }
+                send(false);
+              })
+              .catch((reconnectError) => {
+                if (!this.pending.has(id)) {
+                  return;
+                }
+                clearTimeout(timer);
+                this.pending.delete(id);
+                reject(
+                  reconnectError instanceof Error
+                    ? reconnectError
+                    : new Error(String(reconnectError)),
+                );
+              });
+            return;
+          }
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+
+      send(true);
+    });
+  }
+
+  private async waitForReconnect(timeoutMs: number): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const onConnect = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        this.pending.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
+        this.socket.off("error", onError);
+        resolve();
+      };
+      const onError = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.socket.off("connect", onConnect);
+        reject(error);
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.socket.off("connect", onConnect);
+        this.socket.off("error", onError);
+        reject(new Error(`Sidecar reconnect timed out (${timeoutMs}ms)`));
+      }, timeoutMs);
+
+      this.socket.once("connect", onConnect);
+      this.socket.once("error", onError);
     });
   }
 
@@ -145,4 +223,8 @@ export class RpcClient {
       pending.reject(error);
     }
   }
+}
+
+function isReconnectableSocketGap(error: unknown): boolean {
+  return error instanceof Error && /Sidecar socket unavailable/i.test(error.message);
 }

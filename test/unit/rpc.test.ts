@@ -5,6 +5,7 @@ import {
   AssembleContextInternalResponse,
   AssembleContextInternalRequest,
   AfterTurnKernelRequest,
+  HealthResponse,
   IngestMessageKernelRequest,
   RpcRequest,
   RpcResponse,
@@ -49,6 +50,16 @@ class FakeSocket implements SidecarSocket {
     }
   }
 
+  off(event: "connect" | "error", handler: (() => void) | ((error: Error) => void)): void {
+    if (event === "connect") {
+      const idx = this.connectOnce.indexOf(handler as () => void);
+      if (idx >= 0) this.connectOnce.splice(idx, 1);
+      return;
+    }
+    const idx = this.errorOnce.indexOf(handler as (error: Error) => void);
+    if (idx >= 0) this.errorOnce.splice(idx, 1);
+  }
+
   write(chunk: Buffer | string): void {
     this.writes.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
@@ -75,6 +86,59 @@ class FakeSocket implements SidecarSocket {
       handler(error);
     }
     this.errorOnce = [];
+  }
+}
+
+class ReconnectingSocket extends FakeSocket {
+  private available = false;
+  private readonly reconnectHandlers: Array<() => void> = [];
+  private reconnectErrorHandlers: Array<(error: Error) => void> = [];
+
+  override once(event: "connect" | "error", handler: (() => void) | ((error: Error) => void)): void {
+    if (event === "connect") {
+      if (this.available) {
+        (handler as () => void)();
+        return;
+      }
+      this.reconnectHandlers.push(handler as () => void);
+      return;
+    }
+    this.reconnectErrorHandlers.push(handler as (error: Error) => void);
+  }
+
+  override off(event: "connect" | "error", handler: (() => void) | ((error: Error) => void)): void {
+    if (event === "connect") {
+      const index = this.reconnectHandlers.indexOf(handler as () => void);
+      if (index >= 0) this.reconnectHandlers.splice(index, 1);
+      return;
+    }
+    const index = this.reconnectErrorHandlers.indexOf(handler as (error: Error) => void);
+    if (index >= 0) this.reconnectErrorHandlers.splice(index, 1);
+  }
+
+  override write(chunk: Buffer | string): void {
+    if (!this.available) {
+      throw new Error("Sidecar socket unavailable");
+    }
+    super.write(chunk);
+  }
+
+  emitConnect(): void {
+    this.available = true;
+    for (const handler of this.reconnectHandlers.splice(0)) {
+      handler();
+    }
+  }
+
+  emitReconnectError(error: Error): void {
+    for (const handler of this.reconnectErrorHandlers.splice(0)) {
+      handler(error);
+    }
+  }
+
+  emitClose(): void {
+    this.available = false;
+    super.destroy();
   }
 }
 
@@ -165,6 +229,54 @@ test("RpcClient preserves empty result arrays and debug payloads", async () => {
   assert.equal(result.estimatedTokens, 12);
   assert.equal(result.systemPromptAddition, "sys");
   assert.ok(result.debug !== undefined, "debug payload should be preserved");
+});
+
+test("RpcClient waits for reconnect when the supervisor socket is temporarily unavailable", async () => {
+  const socket = new ReconnectingSocket();
+  const client = new RpcClient(socket, { timeoutMs: 100 });
+
+  socket.emitConnect();
+  const first = client.call<{ ok?: boolean }>("health", {});
+  assert.equal(socket.writes.length, 1);
+  let request = RpcRequest.fromBinary(parseClientFrame(socket.writes[0]!));
+  let response = new (RpcResponse as any)({
+    id: request.id,
+    result: HealthResponse.fromJson({ ok: true }).toBinary(),
+  });
+  socket.emitData(frameServerPayload(response.toBinary()));
+  assert.equal((await first).ok, true);
+
+  socket.emitClose();
+
+  const pending = client.call<{ ok?: boolean }>("health", {});
+
+  assert.equal(socket.writes.length, 1);
+  socket.emitConnect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(socket.writes.length, 2);
+
+  request = RpcRequest.fromBinary(parseClientFrame(socket.writes[1]!));
+  assert.equal(socket.writes[1]![0], 0x02);
+  response = new (RpcResponse as any)({
+    id: request.id,
+    result: HealthResponse.fromJson({ ok: true }).toBinary(),
+  });
+  socket.emitData(frameServerPayload(response.toBinary()));
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+});
+
+test("RpcClient does not resend after the original call has already timed out", async () => {
+  const socket = new ReconnectingSocket();
+  const client = new RpcClient(socket, { timeoutMs: 20 });
+
+  const pending = client.call<{ ok?: boolean }>("health", {});
+  await assert.rejects(pending, /RPC timeout: health \(20ms\)/);
+
+  socket.emitConnect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(socket.writes.length, 0);
 });
 
 test("normalizeKernelMessages flattens rich message blocks before assemble encoding", () => {

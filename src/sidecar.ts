@@ -57,6 +57,14 @@ class PlaceholderSocket implements SidecarSocket {
     this.errorOnce.add(handler as ErrorHandler);
   }
 
+  off(event: "connect" | "error", handler: CloseHandler | ErrorHandler): void {
+    if (event === "connect") {
+      this.connectOnce.delete(handler as CloseHandler);
+      return;
+    }
+    this.errorOnce.delete(handler as ErrorHandler);
+  }
+
   write(chunk: Buffer | string): void {
     try {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
@@ -197,6 +205,14 @@ class SupervisorSocket implements SidecarSocket {
       return;
     }
     this.errorOnce.add(handler as ErrorHandler);
+  }
+
+  off(event: "connect" | "error", handler: CloseHandler | ErrorHandler): void {
+    if (event === "connect") {
+      this.connectOnce.delete(handler as CloseHandler);
+      return;
+    }
+    this.errorOnce.delete(handler as ErrorHandler);
   }
 
   write(chunk: Buffer | string): void {

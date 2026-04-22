@@ -134,6 +134,8 @@ export interface SidecarSocket {
   on(event: "error", handler: (error: Error) => void): void;
   once(event: "connect", handler: () => void): void;
   once(event: "error", handler: (error: Error) => void): void;
+  off(event: "connect", handler: () => void): void;
+  off(event: "error", handler: (error: Error) => void): void;
   write(chunk: Buffer | string): void;
   destroy(err?: Error): void;
 }
@@ -169,4 +171,3 @@ export interface RecallCache<T = unknown> {
   take(key: Pick<RecallCacheEntry<T>, "userId" | "queryText">): RecallCacheEntry<T> | undefined;
   clearUser(userId: string): void;
 }
-

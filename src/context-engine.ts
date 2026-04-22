@@ -33,6 +33,15 @@ type OpenClawCompatibleAssembleResult = {
   debug?: AssembleContextInternalResponse["debug"];
 };
 
+function describeUnexpectedContent(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return String(value);
+  }
+}
+
 function stringifyKernelBlock(block: unknown): string {
   if (!block || typeof block !== "object") {
     return "";
@@ -61,6 +70,10 @@ function stringifyKernelBlock(block: unknown): string {
     case "image":
       return "[image omitted]";
     default:
+      console.warn("[libravdb] unsupported kernel content block", {
+        type: record.type,
+        block: describeUnexpectedContent(record),
+      });
       return typeof record.text === "string" ? record.text : "";
   }
 }
@@ -70,6 +83,10 @@ function normalizeKernelContent(content: unknown): string {
     return content;
   }
   if (!Array.isArray(content)) {
+    console.warn("[libravdb] unexpected kernel content shape", {
+      kind: typeof content,
+      value: describeUnexpectedContent(content),
+    });
     return "";
   }
   return content.map(stringifyKernelBlock).filter((part) => part.length > 0).join("\n");
@@ -101,6 +118,10 @@ export function normalizeAssembleResult(result: {
 }): OpenClawCompatibleAssembleResult {
   const messages = Array.isArray(result.messages)
     ? result.messages.map((message) => ({
+        // OpenClaw replay only expects conversational turns here, so assemble output
+        // is collapsed to user/assistant even though normalizeKernelMessage preserves
+        // richer inbound roles. If kernel.assembleContext starts emitting other roles,
+        // this coercion point is where that contract needs to be revisited.
         role: message.role === "user" ? "user" : "assistant",
         content: normalizeKernelContent(message.content),
         ...(typeof message.id === "string" ? { id: message.id } : {}),
@@ -112,7 +133,7 @@ export function normalizeAssembleResult(result: {
       typeof result.estimatedTokens === "number" ? result.estimatedTokens : 0,
     systemPromptAddition:
       typeof result.systemPromptAddition === "string" ? result.systemPromptAddition : "",
-    ...(result.debug !== undefined ? { debug: result.debug } : {}),
+    ...(result.debug != null ? { debug: result.debug } : {}),
   };
 }
 

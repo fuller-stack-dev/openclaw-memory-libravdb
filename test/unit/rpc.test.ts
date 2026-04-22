@@ -233,6 +233,27 @@ test("normalizeAssembleResult preserves kernel string messages for existing call
   assert.equal(normalized.systemPromptAddition, "sys");
 });
 
+test("normalizeAssembleResult stringifies rich content blocks consistently", () => {
+  const normalized = normalizeAssembleResult({
+    messages: [{
+      role: "assistant",
+      content: [
+        { type: "text", text: "Done" },
+        { type: "toolCall", name: "memory_search", arguments: { q: "needle" } },
+      ],
+      id: "m-rich",
+    }],
+  });
+
+  assert.deepEqual(normalized.messages, [
+    {
+      role: "assistant",
+      content: 'Done\n[tool:memory_search] {"q":"needle"}',
+      id: "m-rich",
+    },
+  ]);
+});
+
 test("normalizeAssembleResult coerces non-replay-safe roles to assistant string messages", () => {
   const normalized = normalizeAssembleResult({
     messages: [{ role: "toolResult", content: "tool output", id: "m2" }],
@@ -245,6 +266,15 @@ test("normalizeAssembleResult coerces non-replay-safe roles to assistant string 
       id: "m2",
     },
   ]);
+});
+
+test("normalizeAssembleResult omits null debug payloads", () => {
+  const normalized = normalizeAssembleResult({
+    messages: [],
+    debug: null as any,
+  });
+
+  assert.equal("debug" in normalized, false);
 });
 
 test("RpcClient rejects on timeout", async () => {

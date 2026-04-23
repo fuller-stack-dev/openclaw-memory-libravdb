@@ -64,6 +64,7 @@ export interface PluginConfig {
   continuityTailBudgetTokens?: number;
   continuityPriorContextTokens?: number;
   compactThreshold?: number;
+  compactionThresholdFraction?: number;
   compactSessionTokenBudget?: number;
   section7CoarseTopK?: number;
   section7SecondPassTopK?: number;

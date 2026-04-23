@@ -36,6 +36,7 @@ type OpenClawCompatibleAssembleResult = {
 
 const APPROX_CHARS_PER_TOKEN = 4;
 const ASSEMBLE_BUDGET_HEADROOM_TOKENS = 256;
+const DEFAULT_COMPACTION_THRESHOLD_FRACTION = 0.8;
 
 type OpenClawCompatibleCompactResult = {
   ok: boolean;
@@ -162,6 +163,41 @@ function approximateMessagesTokens(messages: OpenClawCompatibleMessage[]): numbe
   return messages.reduce((sum, message) => sum + approximateMessageTokens(message), 0);
 }
 
+function normalizeTokenBudget(tokenBudget: number | undefined): number | undefined {
+  if (typeof tokenBudget !== "number" || !Number.isFinite(tokenBudget) || tokenBudget <= 0) {
+    return undefined;
+  }
+  return Math.max(1, Math.floor(tokenBudget));
+}
+
+function resolveEffectiveAssembleBudget(tokenBudget: number | undefined): number {
+  const normalized = normalizeTokenBudget(tokenBudget) ?? 1;
+  return Math.max(1, normalized - ASSEMBLE_BUDGET_HEADROOM_TOKENS);
+}
+
+function normalizeThresholdFraction(fraction: number | undefined): number {
+  if (typeof fraction !== "number" || !Number.isFinite(fraction)) {
+    return DEFAULT_COMPACTION_THRESHOLD_FRACTION;
+  }
+  return Math.min(0.99, Math.max(0.05, fraction));
+}
+
+function resolveDynamicCompactThreshold(
+  tokenBudget: number | undefined,
+  compactThreshold: number | undefined,
+  compactionThresholdFraction: number | undefined,
+): number | undefined {
+  if (typeof compactThreshold === "number" && Number.isFinite(compactThreshold) && compactThreshold > 0) {
+    return Math.max(1, Math.floor(compactThreshold));
+  }
+  const normalizedBudget = normalizeTokenBudget(tokenBudget);
+  if (normalizedBudget == null) {
+    return undefined;
+  }
+  const fraction = normalizeThresholdFraction(compactionThresholdFraction);
+  return Math.max(1, Math.floor(normalizedBudget * fraction));
+}
+
 function truncateContentToTokenBudget(content: string, tokenBudget: number): string {
   if (tokenBudget <= 0) return "";
   const maxChars = Math.max(1, tokenBudget * APPROX_CHARS_PER_TOKEN);
@@ -212,7 +248,7 @@ function enforceTokenBudgetInvariant(
   }
 
   const hardBudget = Math.max(1, Math.floor(tokenBudget));
-  const effectiveBudget = Math.max(1, hardBudget - ASSEMBLE_BUDGET_HEADROOM_TOKENS);
+  const effectiveBudget = resolveEffectiveAssembleBudget(hardBudget);
   const estimated = typeof result.estimatedTokens === "number" ? result.estimatedTokens : 0;
   const approxFromMessages = approximateMessagesTokens(result.messages);
 
@@ -226,6 +262,22 @@ function enforceTokenBudgetInvariant(
     ...result,
     messages: trimmedMessages,
     estimatedTokens: Math.min(effectiveBudget, trimmedEstimate),
+  };
+}
+
+function buildBudgetFallbackContext(
+  messages: OpenClawCompatibleMessage[],
+  tokenBudget: number | undefined,
+): OpenClawCompatibleAssembleResult {
+  const effectiveBudget = resolveEffectiveAssembleBudget(tokenBudget);
+  const fallbackMessages = trimMessagesToBudget(
+    messages.map((message) => ({ ...message })),
+    effectiveBudget,
+  );
+  return {
+    messages: fallbackMessages,
+    estimatedTokens: approximateMessagesTokens(fallbackMessages),
+    systemPromptAddition: "",
   };
 }
 
@@ -280,6 +332,45 @@ export function buildContextEngineFactory(
   recallCache: RecallCache<SearchResult>,
   logger: LoggerLike = console,
 ) {
+  const getDynamicCompactThreshold = (tokenBudget: number | undefined): number | undefined =>
+    resolveDynamicCompactThreshold(
+      tokenBudget,
+      cfg.compactThreshold,
+      cfg.compactionThresholdFraction,
+    );
+
+  const buildAssemblyConfig = (tokenBudget: number | undefined) => ({
+    useSessionRecallProjection: cfg.useSessionRecallProjection,
+    useSessionSummarySearchExperiment: cfg.useSessionSummarySearchExperiment,
+    tokenBudgetFraction: cfg.tokenBudgetFraction,
+    authoredHardBudgetFraction: cfg.authoredHardBudgetFraction,
+    authoredSoftBudgetFraction: cfg.authoredSoftBudgetFraction,
+    elevatedGuidanceBudgetFraction: cfg.elevatedGuidanceBudgetFraction,
+    topK: cfg.topK,
+    continuityMinTurns: cfg.continuityMinTurns,
+    continuityTailBudgetTokens: cfg.continuityTailBudgetTokens,
+    continuityPriorContextTokens: cfg.continuityPriorContextTokens,
+    compactThreshold: getDynamicCompactThreshold(tokenBudget),
+    compactSessionTokenBudget: cfg.compactSessionTokenBudget,
+    section7Theta1: cfg.section7Theta1,
+    section7Kappa: cfg.section7Kappa,
+    section7HopEta: cfg.section7HopEta,
+    section7HopThreshold: cfg.section7HopThreshold,
+    section7CoarseTopK: cfg.section7CoarseTopK,
+    section7SecondPassTopK: cfg.section7SecondPassTopK,
+    section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
+    section7AuthorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
+    section7AuthorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
+    section7AuthorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
+    recoveryFloorScore: cfg.recoveryFloorScore,
+    recoveryMinTopK: cfg.recoveryMinTopK,
+    recoveryMinConfidenceMean: cfg.recoveryMinConfidenceMean,
+    recencyLambdaSession: cfg.recencyLambdaSession,
+    recencyLambdaUser: cfg.recencyLambdaUser,
+    recencyLambdaGlobal: cfg.recencyLambdaGlobal,
+    ingestionGateThreshold: cfg.ingestionGateThreshold,
+  });
+
   function buildCompactSessionRequest(args: {
     sessionId: string;
     force?: boolean;
@@ -305,6 +396,29 @@ export function buildContextEngineFactory(
         ? { continuityPriorContextTokens: cfg.continuityPriorContextTokens }
         : {}),
     };
+  }
+
+  async function runCompaction(args: {
+    sessionId: string;
+    force?: boolean;
+    targetSize?: number;
+    tokenBudget?: number;
+  }): Promise<OpenClawCompatibleCompactResult> {
+    const request = buildCompactSessionRequest(args);
+    const kernel = runtime.getKernel();
+    try {
+      if (kernel) {
+        return normalizeCompactResult(await kernel.compactSession(request));
+      }
+      const rpc = await runtime.getRpc();
+      return normalizeCompactResult(await rpc.call("compact_session", request));
+    } catch (error) {
+      return {
+        ok: false,
+        compacted: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   return {
@@ -357,6 +471,27 @@ export function buildContextEngineFactory(
       prompt?: string;
     }): Promise<OpenClawCompatibleAssembleResult> {
       const messages = normalizeKernelMessages(args.messages);
+      const currentContextTokens =
+        approximateMessagesTokens(messages) + approximateTokenCount(args.prompt ?? "");
+      const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
+      if (
+        dynamicCompactThreshold != null &&
+        currentContextTokens >= dynamicCompactThreshold
+      ) {
+        const compactionResult = await runCompaction({
+          sessionId: args.sessionId,
+          tokenBudget: args.tokenBudget,
+          force: true,
+        });
+        if (!compactionResult.ok || !compactionResult.compacted) {
+          logger.warn?.(
+            `LibraVDB predictive compaction blocked assemble path at ${currentContextTokens} tokens (threshold=${dynamicCompactThreshold}): ${
+              compactionResult.reason ?? "compaction declined"
+            }`,
+          );
+          return buildBudgetFallbackContext(messages, args.tokenBudget);
+        }
+      }
       const kernel = runtime.getKernel();
       if (kernel) {
         try {
@@ -368,7 +503,7 @@ export function buildContextEngineFactory(
               queryText: args.prompt ?? "",
               visibleMessages: messages,
               tokenBudget: args.tokenBudget,
-              config: {},
+              config: buildAssemblyConfig(args.tokenBudget),
               emitDebug: true
             })),
             args.tokenBudget,
@@ -379,15 +514,7 @@ export function buildContextEngineFactory(
               error instanceof Error ? error.message : String(error)
             }`,
           );
-          const fallbackMessages = trimMessagesToBudget(
-            messages.map((message) => ({ ...message })),
-            Math.max(1, Math.floor(args.tokenBudget) - ASSEMBLE_BUDGET_HEADROOM_TOKENS),
-          );
-          return {
-            messages: fallbackMessages,
-            estimatedTokens: approximateMessagesTokens(fallbackMessages),
-            systemPromptAddition: "",
-          };
+          return buildBudgetFallbackContext(messages, args.tokenBudget);
         }
       }
 
@@ -401,37 +528,7 @@ export function buildContextEngineFactory(
           tokenBudget: args.tokenBudget,
           prompt: args.prompt,
           emitDebug: true,
-          config: {
-            useSessionRecallProjection: cfg.useSessionRecallProjection,
-            useSessionSummarySearchExperiment: cfg.useSessionSummarySearchExperiment,
-            tokenBudgetFraction: cfg.tokenBudgetFraction,
-            authoredHardBudgetFraction: cfg.authoredHardBudgetFraction,
-            authoredSoftBudgetFraction: cfg.authoredSoftBudgetFraction,
-            elevatedGuidanceBudgetFraction: cfg.elevatedGuidanceBudgetFraction,
-            topK: cfg.topK,
-            continuityMinTurns: cfg.continuityMinTurns,
-            continuityTailBudgetTokens: cfg.continuityTailBudgetTokens,
-            continuityPriorContextTokens: cfg.continuityPriorContextTokens,
-            compactThreshold: cfg.compactThreshold,
-            compactSessionTokenBudget: cfg.compactSessionTokenBudget,
-            section7Theta1: cfg.section7Theta1,
-            section7Kappa: cfg.section7Kappa,
-            section7HopEta: cfg.section7HopEta,
-            section7HopThreshold: cfg.section7HopThreshold,
-            section7CoarseTopK: cfg.section7CoarseTopK,
-            section7SecondPassTopK: cfg.section7SecondPassTopK,
-            section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
-            section7AuthorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
-            section7AuthorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
-            section7AuthorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
-            recoveryFloorScore: cfg.recoveryFloorScore,
-            recoveryMinTopK: cfg.recoveryMinTopK,
-            recoveryMinConfidenceMean: cfg.recoveryMinConfidenceMean,
-            recencyLambdaSession: cfg.recencyLambdaSession,
-            recencyLambdaUser: cfg.recencyLambdaUser,
-            recencyLambdaGlobal: cfg.recencyLambdaGlobal,
-            ingestionGateThreshold: cfg.ingestionGateThreshold,
-          },
+          config: buildAssemblyConfig(args.tokenBudget),
         });
         return enforceTokenBudgetInvariant(normalizeAssembleResult(resp), args.tokenBudget);
       } catch (error) {
@@ -440,15 +537,7 @@ export function buildContextEngineFactory(
             error instanceof Error ? error.message : String(error)
           }`,
         );
-        const fallbackMessages = trimMessagesToBudget(
-          messages.map((message) => ({ ...message })),
-          Math.max(1, Math.floor(args.tokenBudget) - ASSEMBLE_BUDGET_HEADROOM_TOKENS),
-        );
-        return {
-          messages: fallbackMessages,
-          estimatedTokens: approximateMessagesTokens(fallbackMessages),
-          systemPromptAddition: "",
-        };
+        return buildBudgetFallbackContext(messages, args.tokenBudget);
       }
     },
     async compact(args: {
@@ -457,13 +546,7 @@ export function buildContextEngineFactory(
       targetSize?: number;
       tokenBudget?: number;
     }) {
-      const request = buildCompactSessionRequest(args);
-      const kernel = runtime.getKernel();
-      if (kernel) {
-        return normalizeCompactResult(await kernel.compactSession(request));
-      }
-      const rpc = await runtime.getRpc();
-      return normalizeCompactResult(await rpc.call("compact_session", request));
+      return await runCompaction(args);
     },
     async afterTurn(args: {
       sessionId: string;

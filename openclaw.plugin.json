@@ -2,7 +2,7 @@
   "id": "libravdb-memory",
   "name": "LibraVDB Memory",
   "description": "Persistent vector memory with three-tier hybrid scoring",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "kind": [
     "memory",
     "context-engine"
@@ -236,6 +236,11 @@
       },
       "compactThreshold": {
         "type": "number"
+      },
+      "compactionThresholdFraction": {
+        "type": "number",
+        "default": 0.8,
+        "description": "Dynamic predictive compaction trigger ratio against the active token budget. Used when compactThreshold is not explicitly set."
       },
       "compactSessionTokenBudget": {
         "type": "number",

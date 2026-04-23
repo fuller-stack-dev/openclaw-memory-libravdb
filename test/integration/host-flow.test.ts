@@ -48,7 +48,7 @@ class StaticContractRpc {
           debug: { recoveryTriggerFired: false, crossSessionRawRecovery: false },
         } as unknown as T;
       case "compact_session":
-        return { compacted: true } as unknown as T;
+        return { didCompact: true } as unknown as T;
       default:
         throw new Error(`Static mock missing default response for method: ${method}`);
     }
@@ -159,6 +159,7 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(params.config.tokenBudgetFraction, 0.8);
   assert.equal(params.config.useSessionRecallProjection, true);
   assert.equal(params.config.continuityMinTurns, 4);
+  assert.equal(params.config.compactThreshold, 800);
   assert.equal(params.emitDebug, true);
 
   // Verify inbound response handling
@@ -200,7 +201,7 @@ test("assemble fail-closed on sidecar errors with budget-clamped fallback", asyn
   rpc.mockResponses.set("assemble_context_internal", new Error("Sidecar socket unavailable"));
 
   const recallCache = createRecallCache<SearchResult>();
-  const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
+  const cfg: PluginConfig = { rpcTimeoutMs: 1000, compactThreshold: 100000 };
   const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
 
   const assembled = await context.assemble({
@@ -216,6 +217,70 @@ test("assemble fail-closed on sidecar errors with budget-clamped fallback", asyn
   assert.ok(assembled.estimatedTokens <= 256);
   assert.ok(assembled.messages.length >= 1);
   assert.equal(assembled.systemPromptAddition, "");
+});
+
+test("assemble triggers force compaction at dynamic 80% threshold before daemon assembly", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("compact_session", { didCompact: true });
+  rpc.mockResponses.set("assemble_context_internal", {
+    messages: [{ role: "assistant", content: "ok" }],
+    estimatedTokens: 32,
+    systemPromptAddition: "",
+  });
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    compactionThresholdFraction: 0.8,
+  };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  const assembled = await context.assemble({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [{ role: "assistant", content: "X".repeat(4000) }],
+    tokenBudget: 1000,
+  });
+
+  const compactParams = rpc.getLastCall("compact_session");
+  assert.ok(compactParams, "Expected compact_session to be called");
+  assert.equal(compactParams.sessionId, "test-session");
+  assert.equal(compactParams.force, true);
+  assert.equal(compactParams.targetSize, 1000);
+
+  const assembleParams = rpc.getLastCall("assemble_context_internal");
+  assert.ok(assembleParams, "Expected assemble_context_internal to be called after compaction");
+  assert.equal(assembleParams.config.compactThreshold, 800);
+  assert.equal(assembled.messages[0]?.content, "ok");
+});
+
+test("assemble blocks daemon assembly when predictive compaction fails", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("compact_session", new Error("transaction conflict"));
+  rpc.mockResponses.set("assemble_context_internal", {
+    messages: [{ role: "assistant", content: "should-not-be-used" }],
+    estimatedTokens: 9999,
+    systemPromptAddition: "x",
+  });
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    compactionThresholdFraction: 0.8,
+  };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  const assembled = await context.assemble({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [{ role: "assistant", content: "Y".repeat(4000) }],
+    tokenBudget: 1000,
+  });
+
+  assert.ok(assembled.estimatedTokens <= 744);
+  assert.equal(assembled.systemPromptAddition, "");
+  const assembleCalls = rpc.calls.filter((call) => call.method === "assemble_context_internal");
+  assert.equal(assembleCalls.length, 0, "assemble_context_internal must be blocked on compaction failure");
 });
 
 test("compact maps host budget requests onto legacy sidecar fields", async () => {

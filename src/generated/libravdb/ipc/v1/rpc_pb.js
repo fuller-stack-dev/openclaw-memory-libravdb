@@ -1990,6 +1990,13 @@ export class CompactSessionRequest extends Message {
      * @generated from field: int32 continuity_prior_context_tokens = 6;
      */
     continuityPriorContextTokens = 0;
+    /**
+     * Observed token count at compact-request time.
+     * Lets the daemon gauge prompt pressure and scale compaction aggressiveness.
+     *
+     * @generated from field: int32 current_token_count = 7;
+     */
+    currentTokenCount = 0;
     constructor(data) {
         super();
         proto3.util.initPartial(data, this);
@@ -2003,6 +2010,7 @@ export class CompactSessionRequest extends Message {
         { no: 4, name: "continuity_min_turns", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
         { no: 5, name: "continuity_tail_budget_tokens", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
         { no: 6, name: "continuity_prior_context_tokens", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+        { no: 7, name: "current_token_count", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     ]);
     static fromBinary(bytes, options) {
         return new CompactSessionRequest().fromBinary(bytes, options);

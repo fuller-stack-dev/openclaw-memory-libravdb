@@ -376,6 +376,7 @@ export function buildContextEngineFactory(
     force?: boolean;
     targetSize?: number;
     tokenBudget?: number;
+    currentTokenCount?: number;
   }): Partial<CompactSessionRequest> {
     // OpenClaw core now requests budget-style compaction using tokenBudget,
     // but the current LibraVDB compact_session wire contract still expects
@@ -386,6 +387,7 @@ export function buildContextEngineFactory(
       sessionId: requireSessionId(args.sessionId, "compact"),
       force: args.force,
       ...(typeof targetSize === "number" ? { targetSize } : {}),
+      ...(typeof args.currentTokenCount === "number" ? { currentTokenCount: args.currentTokenCount } : {}),
       ...(typeof cfg.continuityMinTurns === "number"
         ? { continuityMinTurns: cfg.continuityMinTurns }
         : {}),
@@ -403,6 +405,7 @@ export function buildContextEngineFactory(
     force?: boolean;
     targetSize?: number;
     tokenBudget?: number;
+    currentTokenCount?: number;
   }): Promise<OpenClawCompatibleCompactResult> {
     const request = buildCompactSessionRequest(args);
     const kernel = runtime.getKernel();
@@ -482,6 +485,7 @@ export function buildContextEngineFactory(
           sessionId: args.sessionId,
           tokenBudget: args.tokenBudget,
           force: true,
+          currentTokenCount: currentContextTokens,
         });
         if (!compactionResult.ok || !compactionResult.compacted) {
           logger.warn?.(
@@ -545,6 +549,7 @@ export function buildContextEngineFactory(
       force?: boolean;
       targetSize?: number;
       tokenBudget?: number;
+      currentTokenCount?: number;
     }) {
       return await runCompaction(args);
     },

@@ -1293,6 +1293,13 @@ export declare class CompactSessionRequest extends Message<CompactSessionRequest
      * @generated from field: int32 continuity_prior_context_tokens = 6;
      */
     continuityPriorContextTokens: number;
+    /**
+     * Observed token count at compact-request time.
+     * Lets the daemon gauge prompt pressure and scale compaction aggressiveness.
+     *
+     * @generated from field: int32 current_token_count = 7;
+     */
+    currentTokenCount: number;
     constructor(data?: PartialMessage<CompactSessionRequest>);
     static readonly runtime: typeof proto3;
     static readonly typeName = "libravdb.ipc.v1.CompactSessionRequest";

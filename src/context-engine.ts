@@ -11,6 +11,7 @@ import {
   BootstrapSessionKernelRequest,
   IngestMessageKernelRequest,
   CompactSessionRequest,
+  CompactSessionResponse,
 } from "./generated/libravdb/ipc/v1/rpc_pb.js";
 import { resolveDurableNamespace } from "./durable-namespace.js";
 
@@ -32,6 +33,61 @@ type OpenClawCompatibleAssembleResult = {
   systemPromptAddition: string;
   debug?: AssembleContextInternalResponse["debug"];
 };
+
+const APPROX_CHARS_PER_TOKEN = 4;
+const ASSEMBLE_BUDGET_HEADROOM_TOKENS = 256;
+
+type OpenClawCompatibleCompactResult = {
+  ok: boolean;
+  compacted: boolean;
+  reason?: string;
+  result?: {
+    summary?: string;
+    firstKeptEntryId?: string;
+    tokensBefore: number;
+    tokensAfter?: number;
+    details?: unknown;
+  };
+};
+
+function requireSessionId(sessionId: string | undefined, operation: string): string {
+  const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  throw new Error(
+    `LibraVDB ${operation} requires a non-empty sessionId; refusing ambiguous request.`,
+  );
+}
+
+function normalizeCompactResult(
+  response: Partial<CompactSessionResponse> | undefined,
+): OpenClawCompatibleCompactResult {
+  const didCompact = response?.didCompact === true;
+  const details = {
+    clustersFormed:
+      typeof response?.clustersFormed === "number" ? response.clustersFormed : undefined,
+    clustersDeclined:
+      typeof response?.clustersDeclined === "number" ? response.clustersDeclined : undefined,
+    turnsRemoved: typeof response?.turnsRemoved === "number" ? response.turnsRemoved : undefined,
+    summaryMethod:
+      typeof response?.summaryMethod === "string" && response.summaryMethod.length > 0
+        ? response.summaryMethod
+        : undefined,
+    meanConfidence:
+      typeof response?.meanConfidence === "number" ? response.meanConfidence : undefined,
+  };
+  return {
+    ok: true,
+    compacted: didCompact,
+    ...(didCompact ? {} : { reason: "not_compacted" }),
+    result: {
+      tokensBefore: 0,
+      ...(details.summaryMethod ? { summary: details.summaryMethod } : {}),
+      details,
+    },
+  };
+}
 
 function describeUnexpectedContent(value: unknown): string {
   try {
@@ -90,6 +146,87 @@ function normalizeKernelContent(content: unknown): string {
     return "";
   }
   return content.map(stringifyKernelBlock).filter((part) => part.length > 0).join("\n");
+}
+
+function approximateTokenCount(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / APPROX_CHARS_PER_TOKEN);
+}
+
+function approximateMessageTokens(message: OpenClawCompatibleMessage): number {
+  // Approximate per-message wrapper overhead so trimming is conservative.
+  return approximateTokenCount(message.content) + 8;
+}
+
+function approximateMessagesTokens(messages: OpenClawCompatibleMessage[]): number {
+  return messages.reduce((sum, message) => sum + approximateMessageTokens(message), 0);
+}
+
+function truncateContentToTokenBudget(content: string, tokenBudget: number): string {
+  if (tokenBudget <= 0) return "";
+  const maxChars = Math.max(1, tokenBudget * APPROX_CHARS_PER_TOKEN);
+  if (content.length <= maxChars) return content;
+  // Keep the tail so recent tool output / latest answer content is preserved.
+  return content.slice(content.length - maxChars);
+}
+
+function trimMessagesToBudget(
+  messages: OpenClawCompatibleMessage[],
+  tokenBudget: number,
+): OpenClawCompatibleMessage[] {
+  if (tokenBudget <= 0 || messages.length === 0) {
+    return [];
+  }
+
+  const kept: OpenClawCompatibleMessage[] = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const candidate = messages[i]!;
+    const cost = approximateMessageTokens(candidate);
+    if (used + cost > tokenBudget) {
+      continue;
+    }
+    kept.push(candidate);
+    used += cost;
+  }
+
+  if (kept.length > 0) {
+    return kept.reverse();
+  }
+
+  const last = messages[messages.length - 1]!;
+  const contentBudget = Math.max(1, tokenBudget - 8);
+  const truncated = truncateContentToTokenBudget(last.content, contentBudget);
+  if (!truncated) {
+    return [];
+  }
+  return [{ ...last, content: truncated }];
+}
+
+function enforceTokenBudgetInvariant(
+  result: OpenClawCompatibleAssembleResult,
+  tokenBudget: number | undefined,
+): OpenClawCompatibleAssembleResult {
+  if (typeof tokenBudget !== "number" || !Number.isFinite(tokenBudget) || tokenBudget <= 0) {
+    return result;
+  }
+
+  const hardBudget = Math.max(1, Math.floor(tokenBudget));
+  const effectiveBudget = Math.max(1, hardBudget - ASSEMBLE_BUDGET_HEADROOM_TOKENS);
+  const estimated = typeof result.estimatedTokens === "number" ? result.estimatedTokens : 0;
+  const approxFromMessages = approximateMessagesTokens(result.messages);
+
+  if (estimated <= effectiveBudget && approxFromMessages <= effectiveBudget) {
+    return result;
+  }
+
+  const trimmedMessages = trimMessagesToBudget(result.messages, effectiveBudget);
+  const trimmedEstimate = approximateMessagesTokens(trimmedMessages);
+  return {
+    ...result,
+    messages: trimmedMessages,
+    estimatedTokens: Math.min(effectiveBudget, trimmedEstimate),
+  };
 }
 
 export function normalizeKernelMessage(message: {
@@ -155,7 +292,7 @@ export function buildContextEngineFactory(
     // timeout retries still compact toward the host's requested prompt budget.
     const targetSize = args.targetSize ?? args.tokenBudget;
     return {
-      sessionId: args.sessionId,
+      sessionId: requireSessionId(args.sessionId, "compact"),
       force: args.force,
       ...(typeof targetSize === "number" ? { targetSize } : {}),
       ...(typeof cfg.continuityMinTurns === "number"
@@ -222,60 +359,97 @@ export function buildContextEngineFactory(
       const messages = normalizeKernelMessages(args.messages);
       const kernel = runtime.getKernel();
       if (kernel) {
-        return normalizeAssembleResult(await kernel.assembleContext({
-          sessionId: args.sessionId,
-          sessionKey: args.sessionKey,
-          userId: args.userId,
-          queryText: args.prompt ?? "",
-          visibleMessages: messages,
-          tokenBudget: args.tokenBudget,
-          config: {},
-          emitDebug: true
-        }));
+        try {
+          return enforceTokenBudgetInvariant(
+            normalizeAssembleResult(await kernel.assembleContext({
+              sessionId: args.sessionId,
+              sessionKey: args.sessionKey,
+              userId: args.userId,
+              queryText: args.prompt ?? "",
+              visibleMessages: messages,
+              tokenBudget: args.tokenBudget,
+              config: {},
+              emitDebug: true
+            })),
+            args.tokenBudget,
+          );
+        } catch (error) {
+          logger.warn?.(
+            `LibraVDB assemble kernel failed, using budget-clamped fallback context: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          const fallbackMessages = trimMessagesToBudget(
+            messages.map((message) => ({ ...message })),
+            Math.max(1, Math.floor(args.tokenBudget) - ASSEMBLE_BUDGET_HEADROOM_TOKENS),
+          );
+          return {
+            messages: fallbackMessages,
+            estimatedTokens: approximateMessagesTokens(fallbackMessages),
+            systemPromptAddition: "",
+          };
+        }
       }
 
       const rpc = await runtime.getRpc();
-      const resp = await rpc.call<AssembleContextInternalResponse>("assemble_context_internal", {
-        sessionId: args.sessionId,
-        sessionKey: args.sessionKey,
-        userId: args.userId,
-        messages,
-        tokenBudget: args.tokenBudget,
-        prompt: args.prompt,
-        emitDebug: true,
-        config: {
-          useSessionRecallProjection: cfg.useSessionRecallProjection,
-          useSessionSummarySearchExperiment: cfg.useSessionSummarySearchExperiment,
-          tokenBudgetFraction: cfg.tokenBudgetFraction,
-          authoredHardBudgetFraction: cfg.authoredHardBudgetFraction,
-          authoredSoftBudgetFraction: cfg.authoredSoftBudgetFraction,
-          elevatedGuidanceBudgetFraction: cfg.elevatedGuidanceBudgetFraction,
-          topK: cfg.topK,
-          continuityMinTurns: cfg.continuityMinTurns,
-          continuityTailBudgetTokens: cfg.continuityTailBudgetTokens,
-          continuityPriorContextTokens: cfg.continuityPriorContextTokens,
-          compactThreshold: cfg.compactThreshold,
-          compactSessionTokenBudget: cfg.compactSessionTokenBudget,
-          section7Theta1: cfg.section7Theta1,
-          section7Kappa: cfg.section7Kappa,
-          section7HopEta: cfg.section7HopEta,
-          section7HopThreshold: cfg.section7HopThreshold,
-          section7CoarseTopK: cfg.section7CoarseTopK,
-          section7SecondPassTopK: cfg.section7SecondPassTopK,
-          section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
-          section7AuthorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
-          section7AuthorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
-          section7AuthorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
-          recoveryFloorScore: cfg.recoveryFloorScore,
-          recoveryMinTopK: cfg.recoveryMinTopK,
-          recoveryMinConfidenceMean: cfg.recoveryMinConfidenceMean,
-          recencyLambdaSession: cfg.recencyLambdaSession,
-          recencyLambdaUser: cfg.recencyLambdaUser,
-          recencyLambdaGlobal: cfg.recencyLambdaGlobal,
-          ingestionGateThreshold: cfg.ingestionGateThreshold,
-        },
-      });
-      return normalizeAssembleResult(resp);
+      try {
+        const resp = await rpc.call<AssembleContextInternalResponse>("assemble_context_internal", {
+          sessionId: args.sessionId,
+          sessionKey: args.sessionKey,
+          userId: args.userId,
+          messages,
+          tokenBudget: args.tokenBudget,
+          prompt: args.prompt,
+          emitDebug: true,
+          config: {
+            useSessionRecallProjection: cfg.useSessionRecallProjection,
+            useSessionSummarySearchExperiment: cfg.useSessionSummarySearchExperiment,
+            tokenBudgetFraction: cfg.tokenBudgetFraction,
+            authoredHardBudgetFraction: cfg.authoredHardBudgetFraction,
+            authoredSoftBudgetFraction: cfg.authoredSoftBudgetFraction,
+            elevatedGuidanceBudgetFraction: cfg.elevatedGuidanceBudgetFraction,
+            topK: cfg.topK,
+            continuityMinTurns: cfg.continuityMinTurns,
+            continuityTailBudgetTokens: cfg.continuityTailBudgetTokens,
+            continuityPriorContextTokens: cfg.continuityPriorContextTokens,
+            compactThreshold: cfg.compactThreshold,
+            compactSessionTokenBudget: cfg.compactSessionTokenBudget,
+            section7Theta1: cfg.section7Theta1,
+            section7Kappa: cfg.section7Kappa,
+            section7HopEta: cfg.section7HopEta,
+            section7HopThreshold: cfg.section7HopThreshold,
+            section7CoarseTopK: cfg.section7CoarseTopK,
+            section7SecondPassTopK: cfg.section7SecondPassTopK,
+            section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
+            section7AuthorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
+            section7AuthorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
+            section7AuthorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
+            recoveryFloorScore: cfg.recoveryFloorScore,
+            recoveryMinTopK: cfg.recoveryMinTopK,
+            recoveryMinConfidenceMean: cfg.recoveryMinConfidenceMean,
+            recencyLambdaSession: cfg.recencyLambdaSession,
+            recencyLambdaUser: cfg.recencyLambdaUser,
+            recencyLambdaGlobal: cfg.recencyLambdaGlobal,
+            ingestionGateThreshold: cfg.ingestionGateThreshold,
+          },
+        });
+        return enforceTokenBudgetInvariant(normalizeAssembleResult(resp), args.tokenBudget);
+      } catch (error) {
+        logger.warn?.(
+          `LibraVDB assemble sidecar failed, using budget-clamped fallback context: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        const fallbackMessages = trimMessagesToBudget(
+          messages.map((message) => ({ ...message })),
+          Math.max(1, Math.floor(args.tokenBudget) - ASSEMBLE_BUDGET_HEADROOM_TOKENS),
+        );
+        return {
+          messages: fallbackMessages,
+          estimatedTokens: approximateMessagesTokens(fallbackMessages),
+          systemPromptAddition: "",
+        };
+      }
     },
     async compact(args: {
       sessionId: string;
@@ -286,10 +460,10 @@ export function buildContextEngineFactory(
       const request = buildCompactSessionRequest(args);
       const kernel = runtime.getKernel();
       if (kernel) {
-        return await kernel.compactSession(request);
+        return normalizeCompactResult(await kernel.compactSession(request));
       }
       const rpc = await runtime.getRpc();
-      return await rpc.call("compact_session", request);
+      return normalizeCompactResult(await rpc.call("compact_session", request));
     },
     async afterTurn(args: {
       sessionId: string;

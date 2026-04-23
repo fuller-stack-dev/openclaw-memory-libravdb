@@ -24,7 +24,11 @@ class StaticContractRpc {
     this.calls.push({ method, params });
 
     if (this.mockResponses.has(method)) {
-      return this.mockResponses.get(method) as T;
+      const mockValue = this.mockResponses.get(method);
+      if (mockValue instanceof Error) {
+        throw mockValue;
+      }
+      return mockValue as T;
     }
 
     // Default static success responses matching rpc_pb.d.ts
@@ -164,6 +168,56 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(assembled.debug?.recoveryTriggerFired, true);
 });
 
+test("assemble clamps oversized daemon context to token budget", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("assemble_context_internal", {
+    messages: [
+      { role: "assistant", content: "A".repeat(3200) },
+      { role: "assistant", content: "B".repeat(3200) },
+    ],
+    estimatedTokens: 5000,
+    systemPromptAddition: "x",
+    debug: { recoveryTriggerFired: false, crossSessionRawRecovery: false },
+  });
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  const assembled = await context.assemble({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [{ role: "user", content: "hello" }],
+    tokenBudget: 512,
+  });
+
+  assert.ok(assembled.estimatedTokens <= 256);
+  assert.ok(assembled.messages.length <= 1);
+});
+
+test("assemble fail-closed on sidecar errors with budget-clamped fallback", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("assemble_context_internal", new Error("Sidecar socket unavailable"));
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  const assembled = await context.assemble({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [
+      { role: "user", content: "U".repeat(2200) },
+      { role: "assistant", content: "A".repeat(2200) },
+    ],
+    tokenBudget: 512,
+  });
+
+  assert.ok(assembled.estimatedTokens <= 256);
+  assert.ok(assembled.messages.length >= 1);
+  assert.equal(assembled.systemPromptAddition, "");
+});
+
 test("compact maps host budget requests onto legacy sidecar fields", async () => {
   const rpc = new StaticContractRpc();
   const recallCache = createRecallCache<SearchResult>();
@@ -190,6 +244,56 @@ test("compact maps host budget requests onto legacy sidecar fields", async () =>
   assert.equal(params.continuityMinTurns, 4);
   assert.equal(params.continuityTailBudgetTokens, 640);
   assert.equal(params.continuityPriorContextTokens, 320);
+});
+
+test("compact normalizes daemon compact response into SDK CompactResult", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("compact_session", {
+    didCompact: true,
+    clustersFormed: 2,
+    clustersDeclined: 1,
+    turnsRemoved: 7,
+    summaryMethod: "extractive",
+    meanConfidence: 0.91,
+  });
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  const result = await context.compact({
+    sessionId: "test-session",
+    tokenBudget: 2048,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compacted, true);
+  assert.equal(result.reason, undefined);
+  assert.equal(result.result?.summary, "extractive");
+  assert.equal(result.result?.tokensBefore, 0);
+  assert.deepEqual(result.result?.details, {
+    clustersFormed: 2,
+    clustersDeclined: 1,
+    turnsRemoved: 7,
+    summaryMethod: "extractive",
+    meanConfidence: 0.91,
+  });
+});
+
+test("compact rejects empty sessionId to prevent accidental session rollover", async () => {
+  const rpc = new StaticContractRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  await assert.rejects(
+    context.compact({
+      sessionId: " ",
+      tokenBudget: 2048,
+    }),
+    /requires a non-empty sessionId/i,
+  );
+  assert.equal(rpc.getLastCall("compact_session"), null);
 });
 
 test("afterTurn forwards message arrays and pre-prompt counts correctly", async () => {

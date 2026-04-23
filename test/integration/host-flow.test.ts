@@ -254,6 +254,35 @@ test("assemble triggers force compaction at dynamic 80% threshold before daemon 
   assert.equal(assembled.messages[0]?.content, "ok");
 });
 
+test("assemble prefers authoritative currentTokenCount for predictive compaction", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("compact_session", { didCompact: true });
+  rpc.mockResponses.set("assemble_context_internal", {
+    messages: [{ role: "assistant", content: "ok" }],
+    estimatedTokens: 32,
+    systemPromptAddition: "",
+  });
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    compactionThresholdFraction: 0.8,
+  };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  await context.assemble({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [{ role: "assistant", content: "small" }],
+    tokenBudget: 1000,
+    currentTokenCount: 900,
+  });
+
+  const compactParams = rpc.getLastCall("compact_session");
+  assert.ok(compactParams, "Expected compact_session to be called");
+  assert.equal(compactParams.currentTokenCount, 900);
+});
+
 test("assemble blocks daemon assembly when predictive compaction fails", async () => {
   const rpc = new StaticContractRpc();
   rpc.mockResponses.set("compact_session", new Error("transaction conflict"));
@@ -388,4 +417,35 @@ test("afterTurn forwards message arrays and pre-prompt counts correctly", async 
   assert.equal(params.prePromptMessageCount, 2);
   assert.equal(params.isHeartbeat, false);
   assert.deepEqual(params.messages, mockMessages);
+});
+
+test("afterTurn triggers predictive compaction from runtimeContext currentTokenCount", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("compact_session", { didCompact: true });
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    compactionThresholdFraction: 0.8,
+  };
+
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  await context.afterTurn({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [{ role: "assistant", content: "small" }],
+    prePromptMessageCount: 1,
+    tokenBudget: 1000,
+    runtimeContext: { currentTokenCount: 900 },
+  });
+
+  assert.deepEqual(
+    rpc.calls.map((call) => call.method),
+    ["after_turn_kernel", "compact_session"],
+  );
+
+  const compactParams = rpc.getLastCall("compact_session");
+  assert.ok(compactParams, "Expected compact_session to be called");
+  assert.equal(compactParams.currentTokenCount, 900);
+  assert.equal(compactParams.targetSize, 1000);
 });

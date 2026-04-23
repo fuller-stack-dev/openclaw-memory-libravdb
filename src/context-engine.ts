@@ -147,6 +147,17 @@ function approximateMessagesTokens(messages: OpenClawCompatibleMessage[]): numbe
   return messages.reduce((sum, message) => sum + approximateMessageTokens(message), 0);
 }
 
+function normalizeCurrentTokenCount(currentTokenCount: number | undefined): number | undefined {
+  if (
+    typeof currentTokenCount !== "number" ||
+    !Number.isFinite(currentTokenCount) ||
+    currentTokenCount <= 0
+  ) {
+    return undefined;
+  }
+  return Math.max(1, Math.floor(currentTokenCount));
+}
+
 function normalizeTokenBudget(tokenBudget: number | undefined): number | undefined {
   if (typeof tokenBudget !== "number" || !Number.isFinite(tokenBudget) || tokenBudget <= 0) {
     return undefined;
@@ -263,6 +274,17 @@ function buildBudgetFallbackContext(
     estimatedTokens: approximateMessagesTokens(fallbackMessages),
     systemPromptAddition: "",
   };
+}
+
+function resolvePredictiveCompactionTokenCount(args: {
+  currentTokenCount?: number;
+  messages: OpenClawCompatibleMessage[];
+  prompt?: string;
+}): number {
+  return (
+    normalizeCurrentTokenCount(args.currentTokenCount) ??
+    approximateMessagesTokens(args.messages) + approximateTokenCount(args.prompt ?? "")
+  );
 }
 
 export function normalizeKernelMessage(message: {
@@ -456,10 +478,14 @@ export function buildContextEngineFactory(
       messages: Array<{ role: string; content: unknown; id?: string }>;
       tokenBudget: number;
       prompt?: string;
+      currentTokenCount?: number;
     }): Promise<OpenClawCompatibleAssembleResult> {
       const messages = normalizeKernelMessages(args.messages);
-      const currentContextTokens =
-        approximateMessagesTokens(messages) + approximateTokenCount(args.prompt ?? "");
+      const currentContextTokens = resolvePredictiveCompactionTokenCount({
+        currentTokenCount: args.currentTokenCount,
+        messages,
+        prompt: args.prompt,
+      });
       const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
       if (
         dynamicCompactThreshold != null &&
@@ -546,8 +572,13 @@ export function buildContextEngineFactory(
     }) {
       const messages = normalizeKernelMessages(args.messages);
       const kernel = runtime.getKernel();
+      const currentTokenCount = normalizeCurrentTokenCount(
+        typeof args.runtimeContext?.currentTokenCount === "number"
+          ? args.runtimeContext.currentTokenCount
+          : undefined,
+      );
       if (kernel) {
-        return await kernel.afterTurn({
+        const result = await kernel.afterTurn({
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
           userId: args.userId,
@@ -555,12 +586,52 @@ export function buildContextEngineFactory(
           prePromptMessageCount: args.prePromptMessageCount,
           isHeartbeat: args.isHeartbeat,
         });
+        const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
+        if (
+          dynamicCompactThreshold != null &&
+          currentTokenCount != null &&
+          currentTokenCount >= dynamicCompactThreshold
+        ) {
+          const compactionResult = await runCompaction({
+            sessionId: args.sessionId,
+            tokenBudget: args.tokenBudget,
+            force: true,
+            currentTokenCount,
+          });
+          if (!compactionResult.ok || !compactionResult.compacted) {
+            logger.warn?.(
+              `LibraVDB afterTurn predictive compaction did not compact at ${currentTokenCount} tokens ` +
+              `(threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction declined"}`,
+            );
+          }
+        }
+        return result;
       }
       const rpc = await runtime.getRpc();
-      return await rpc.call("after_turn_kernel", {
+      const result = await rpc.call("after_turn_kernel", {
         ...args,
         messages,
       });
+      const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
+      if (
+        dynamicCompactThreshold != null &&
+        currentTokenCount != null &&
+        currentTokenCount >= dynamicCompactThreshold
+      ) {
+        const compactionResult = await runCompaction({
+          sessionId: args.sessionId,
+          tokenBudget: args.tokenBudget,
+          force: true,
+          currentTokenCount,
+        });
+        if (!compactionResult.ok || !compactionResult.compacted) {
+          logger.warn?.(
+            `LibraVDB afterTurn predictive compaction did not compact at ${currentTokenCount} tokens ` +
+            `(threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction declined"}`,
+          );
+        }
+      }
+      return result;
     }
   };
 }

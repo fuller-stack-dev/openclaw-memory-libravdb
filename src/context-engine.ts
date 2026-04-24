@@ -448,7 +448,12 @@ export function buildContextEngineFactory(
       sessionId: requireSessionId(args.sessionId, "compact"),
       force: args.force,
       ...(typeof targetSize === "number" ? { targetSize } : {}),
-      ...(typeof args.currentTokenCount === "number" ? { currentTokenCount: args.currentTokenCount } : {}),
+      ...(() => {
+        const normalizedCurrentTokenCount = normalizeCurrentTokenCount(args.currentTokenCount);
+        return normalizedCurrentTokenCount != null
+          ? { currentTokenCount: normalizedCurrentTokenCount }
+          : {};
+      })(),
       ...(typeof cfg.continuityMinTurns === "number"
         ? { continuityMinTurns: cfg.continuityMinTurns }
         : {}),
@@ -483,6 +488,52 @@ export function buildContextEngineFactory(
         reason: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async function performAfterTurnPredictiveCompaction(args: {
+    sessionId: string;
+    tokenBudget?: number;
+    currentTokenCount?: number;
+  }): Promise<void> {
+    const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
+    const predictiveTargetSize = resolvePredictiveCompactionTarget({
+      currentTokenCount: args.currentTokenCount,
+      threshold: dynamicCompactThreshold,
+    });
+    if (
+      args.currentTokenCount == null ||
+      dynamicCompactThreshold == null ||
+      predictiveTargetSize == null
+    ) {
+      return;
+    }
+    logPredictiveCompactionAttempt({
+      logger,
+      phase: "afterTurn",
+      sessionId: args.sessionId,
+      currentTokenCount: args.currentTokenCount,
+      threshold: dynamicCompactThreshold,
+      targetSize: predictiveTargetSize,
+      tokenBudget: args.tokenBudget,
+    });
+    const compactionResult = await runCompaction({
+      sessionId: args.sessionId,
+      targetSize: predictiveTargetSize,
+      tokenBudget: args.tokenBudget,
+      force: true,
+      currentTokenCount: args.currentTokenCount,
+    });
+    logPredictiveCompactionOutcome({
+      logger,
+      phase: "afterTurn",
+      sessionId: args.sessionId,
+      currentTokenCount: args.currentTokenCount,
+      threshold: dynamicCompactThreshold,
+      targetSize: predictiveTargetSize,
+      tokenBudget: args.tokenBudget,
+      compacted: compactionResult.compacted,
+      reason: compactionResult.reason,
+    });
   }
 
   return {
@@ -574,7 +625,11 @@ export function buildContextEngineFactory(
           compacted: compactionResult.compacted,
           reason: compactionResult.reason,
         });
-        if (!compactionResult.ok || !compactionResult.compacted) {
+        if (!compactionResult.ok) {
+          logger.warn?.(
+            `LibraVDB predictive compaction blocked assemble path at ${currentContextTokens} tokens ` +
+            `(threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction failed"}`,
+          );
           return buildBudgetFallbackContext(messages, args.tokenBudget);
         }
       }
@@ -659,44 +714,11 @@ export function buildContextEngineFactory(
           prePromptMessageCount: args.prePromptMessageCount,
           isHeartbeat: args.isHeartbeat,
         });
-        const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
-        const predictiveTargetSize = resolvePredictiveCompactionTarget({
+        await performAfterTurnPredictiveCompaction({
+          sessionId: args.sessionId,
+          tokenBudget: args.tokenBudget,
           currentTokenCount,
-          threshold: dynamicCompactThreshold,
         });
-        if (
-          currentTokenCount != null &&
-          dynamicCompactThreshold != null &&
-          predictiveTargetSize != null
-        ) {
-          logPredictiveCompactionAttempt({
-            logger,
-            phase: "afterTurn",
-            sessionId: args.sessionId,
-            currentTokenCount,
-            threshold: dynamicCompactThreshold,
-            targetSize: predictiveTargetSize,
-            tokenBudget: args.tokenBudget,
-          });
-          const compactionResult = await runCompaction({
-            sessionId: args.sessionId,
-            targetSize: predictiveTargetSize,
-            tokenBudget: args.tokenBudget,
-            force: true,
-            currentTokenCount,
-          });
-          logPredictiveCompactionOutcome({
-            logger,
-            phase: "afterTurn",
-            sessionId: args.sessionId,
-            currentTokenCount,
-            threshold: dynamicCompactThreshold,
-            targetSize: predictiveTargetSize,
-            tokenBudget: args.tokenBudget,
-            compacted: compactionResult.compacted,
-            reason: compactionResult.reason,
-          });
-        }
         return result;
       }
       const rpc = await runtime.getRpc();
@@ -704,44 +726,11 @@ export function buildContextEngineFactory(
         ...args,
         messages,
       });
-      const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
-      const predictiveTargetSize = resolvePredictiveCompactionTarget({
+      await performAfterTurnPredictiveCompaction({
+        sessionId: args.sessionId,
+        tokenBudget: args.tokenBudget,
         currentTokenCount,
-        threshold: dynamicCompactThreshold,
       });
-      if (
-        currentTokenCount != null &&
-        dynamicCompactThreshold != null &&
-        predictiveTargetSize != null
-      ) {
-        logPredictiveCompactionAttempt({
-          logger,
-          phase: "afterTurn",
-          sessionId: args.sessionId,
-          currentTokenCount,
-          threshold: dynamicCompactThreshold,
-          targetSize: predictiveTargetSize,
-          tokenBudget: args.tokenBudget,
-        });
-        const compactionResult = await runCompaction({
-          sessionId: args.sessionId,
-          targetSize: predictiveTargetSize,
-          tokenBudget: args.tokenBudget,
-          force: true,
-          currentTokenCount,
-        });
-        logPredictiveCompactionOutcome({
-          logger,
-          phase: "afterTurn",
-          sessionId: args.sessionId,
-          currentTokenCount,
-          threshold: dynamicCompactThreshold,
-          targetSize: predictiveTargetSize,
-          tokenBudget: args.tokenBudget,
-          compacted: compactionResult.compacted,
-          reason: compactionResult.reason,
-        });
-      }
       return result;
     }
   };

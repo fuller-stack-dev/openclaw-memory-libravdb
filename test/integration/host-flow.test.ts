@@ -290,6 +290,37 @@ test("assemble prefers authoritative currentTokenCount for predictive compaction
   assert.equal(compactParams.targetSize, 799);
 });
 
+test("assemble proceeds to assembly when server legitimately declines compaction", async () => {
+  const rpc = new StaticContractRpc();
+  rpc.mockResponses.set("compact_session", { didCompact: false });
+  rpc.mockResponses.set("assemble_context_internal", {
+    messages: [{ role: "assistant", content: "recalled" }],
+    estimatedTokens: 40,
+    systemPromptAddition: "<recalled>x</recalled>",
+  });
+
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    compactionThresholdFraction: 0.8,
+  };
+  const logger = createMemoryLogger();
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache, logger);
+
+  const assembled = await context.assemble({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [{ role: "assistant", content: "X".repeat(4000) }],
+    tokenBudget: 1000,
+  });
+
+  const assembleParams = rpc.getLastCall("assemble_context_internal");
+  assert.ok(assembleParams, "assemble_context_internal must be called when compaction declines");
+  assert.equal(assembled.messages[0]?.content, "recalled");
+  assert.equal(assembled.systemPromptAddition, "<recalled>x</recalled>");
+  assert.match(logger.warns[0] ?? "", /did not compact.*phase=assemble/);
+});
+
 test("assemble blocks daemon assembly when predictive compaction fails", async () => {
   const rpc = new StaticContractRpc();
   rpc.mockResponses.set("compact_session", new Error("transaction conflict"));
@@ -397,6 +428,23 @@ test("compact rejects empty sessionId to prevent accidental session rollover", a
   assert.equal(rpc.getLastCall("compact_session"), null);
 });
 
+test("compact omits invalid currentTokenCount values from the wire request", async () => {
+  const rpc = new StaticContractRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  await context.compact({
+    sessionId: "test-session",
+    tokenBudget: 2048,
+    currentTokenCount: Number.NaN,
+  });
+
+  const params = rpc.getLastCall("compact_session");
+  assert.ok(params, "Expected compact_session to be called");
+  assert.equal("currentTokenCount" in params, false);
+});
+
 test("afterTurn forwards message arrays and pre-prompt counts correctly", async () => {
   const rpc = new StaticContractRpc();
   const recallCache = createRecallCache<SearchResult>();
@@ -459,4 +507,30 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
   assert.equal(logger.warns.length, 0);
   assert.match(logger.infos[0] ?? "", /predictive compaction trigger phase=afterTurn/);
   assert.match(logger.infos[1] ?? "", /predictive compaction completed phase=afterTurn/);
+});
+
+test("afterTurn does not trigger predictive compaction without authoritative currentTokenCount", async () => {
+  const rpc = new StaticContractRpc();
+  const recallCache = createRecallCache<SearchResult>();
+  const cfg: PluginConfig = {
+    rpcTimeoutMs: 1000,
+    compactionThresholdFraction: 0.8,
+  };
+
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+
+  await context.afterTurn({
+    sessionId: "test-session",
+    userId: "test-user",
+    messages: [{ role: "assistant", content: "small" }],
+    prePromptMessageCount: 1,
+    tokenBudget: 1000,
+    runtimeContext: { currentTokenCount: Number.NaN },
+  });
+
+  assert.deepEqual(
+    rpc.calls.map((call) => call.method),
+    ["after_turn_kernel"],
+  );
+  assert.equal(rpc.getLastCall("compact_session"), null);
 });

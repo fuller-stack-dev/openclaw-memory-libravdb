@@ -193,6 +193,61 @@ function resolveDynamicCompactThreshold(
   return Math.max(1, Math.floor(normalizedBudget * fraction));
 }
 
+function resolvePredictiveCompactionTarget(params: {
+  currentTokenCount: number | undefined;
+  threshold: number | undefined;
+}): number | undefined {
+  const currentTokenCount = normalizeCurrentTokenCount(params.currentTokenCount);
+  const threshold = normalizeTokenBudget(params.threshold);
+  if (currentTokenCount == null || threshold == null || currentTokenCount < threshold) {
+    return undefined;
+  }
+
+  const belowThresholdTarget = Math.max(1, threshold - 1);
+  return belowThresholdTarget < currentTokenCount
+    ? belowThresholdTarget
+    : Math.max(1, currentTokenCount - 1);
+}
+
+function logPredictiveCompactionAttempt(params: {
+  logger: LoggerLike;
+  phase: "assemble" | "afterTurn";
+  sessionId: string;
+  currentTokenCount: number;
+  threshold: number;
+  targetSize: number;
+  tokenBudget: number | undefined;
+}) {
+  params.logger.info?.(
+    `LibraVDB predictive compaction trigger phase=${params.phase} sessionId=${params.sessionId} ` +
+      `currentTokenCount=${params.currentTokenCount} threshold=${params.threshold} ` +
+      `targetSize=${params.targetSize} tokenBudget=${params.tokenBudget ?? "unknown"}`,
+  );
+}
+
+function logPredictiveCompactionOutcome(params: {
+  logger: LoggerLike;
+  phase: "assemble" | "afterTurn";
+  sessionId: string;
+  currentTokenCount: number;
+  threshold: number;
+  targetSize: number;
+  tokenBudget: number | undefined;
+  compacted: boolean;
+  reason?: string;
+}) {
+  const message =
+    `LibraVDB predictive compaction ${params.compacted ? "completed" : "did not compact"} ` +
+    `phase=${params.phase} sessionId=${params.sessionId} currentTokenCount=${params.currentTokenCount} ` +
+    `threshold=${params.threshold} targetSize=${params.targetSize} tokenBudget=${params.tokenBudget ?? "unknown"}` +
+    (params.reason ? ` reason=${params.reason}` : "");
+  if (params.compacted) {
+    params.logger.info?.(message);
+    return;
+  }
+  params.logger.warn?.(message);
+}
+
 function truncateContentToTokenBudget(content: string, tokenBudget: number): string {
   if (tokenBudget <= 0) return "";
   const maxChars = Math.max(1, tokenBudget * APPROX_CHARS_PER_TOKEN);
@@ -487,21 +542,39 @@ export function buildContextEngineFactory(
         prompt: args.prompt,
       });
       const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
-      if (
-        dynamicCompactThreshold != null &&
-        currentContextTokens >= dynamicCompactThreshold
-      ) {
+      const predictiveTargetSize = resolvePredictiveCompactionTarget({
+        currentTokenCount: currentContextTokens,
+        threshold: dynamicCompactThreshold,
+      });
+      if (dynamicCompactThreshold != null && predictiveTargetSize != null) {
+        logPredictiveCompactionAttempt({
+          logger,
+          phase: "assemble",
+          sessionId: args.sessionId,
+          currentTokenCount: currentContextTokens,
+          threshold: dynamicCompactThreshold,
+          targetSize: predictiveTargetSize,
+          tokenBudget: args.tokenBudget,
+        });
         const compactionResult = await runCompaction({
           sessionId: args.sessionId,
+          targetSize: predictiveTargetSize,
           tokenBudget: args.tokenBudget,
           force: true,
           currentTokenCount: currentContextTokens,
         });
+        logPredictiveCompactionOutcome({
+          logger,
+          phase: "assemble",
+          sessionId: args.sessionId,
+          currentTokenCount: currentContextTokens,
+          threshold: dynamicCompactThreshold,
+          targetSize: predictiveTargetSize,
+          tokenBudget: args.tokenBudget,
+          compacted: compactionResult.compacted,
+          reason: compactionResult.reason,
+        });
         if (!compactionResult.ok || !compactionResult.compacted) {
-          logger.warn?.(
-            `LibraVDB predictive compaction blocked assemble path at ${currentContextTokens} tokens (threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction declined"
-            }`,
-          );
           return buildBudgetFallbackContext(messages, args.tokenBudget);
         }
       }
@@ -587,23 +660,42 @@ export function buildContextEngineFactory(
           isHeartbeat: args.isHeartbeat,
         });
         const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
+        const predictiveTargetSize = resolvePredictiveCompactionTarget({
+          currentTokenCount,
+          threshold: dynamicCompactThreshold,
+        });
         if (
-          dynamicCompactThreshold != null &&
           currentTokenCount != null &&
-          currentTokenCount >= dynamicCompactThreshold
+          dynamicCompactThreshold != null &&
+          predictiveTargetSize != null
         ) {
+          logPredictiveCompactionAttempt({
+            logger,
+            phase: "afterTurn",
+            sessionId: args.sessionId,
+            currentTokenCount,
+            threshold: dynamicCompactThreshold,
+            targetSize: predictiveTargetSize,
+            tokenBudget: args.tokenBudget,
+          });
           const compactionResult = await runCompaction({
             sessionId: args.sessionId,
+            targetSize: predictiveTargetSize,
             tokenBudget: args.tokenBudget,
             force: true,
             currentTokenCount,
           });
-          if (!compactionResult.ok || !compactionResult.compacted) {
-            logger.warn?.(
-              `LibraVDB afterTurn predictive compaction did not compact at ${currentTokenCount} tokens ` +
-              `(threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction declined"}`,
-            );
-          }
+          logPredictiveCompactionOutcome({
+            logger,
+            phase: "afterTurn",
+            sessionId: args.sessionId,
+            currentTokenCount,
+            threshold: dynamicCompactThreshold,
+            targetSize: predictiveTargetSize,
+            tokenBudget: args.tokenBudget,
+            compacted: compactionResult.compacted,
+            reason: compactionResult.reason,
+          });
         }
         return result;
       }
@@ -613,23 +705,42 @@ export function buildContextEngineFactory(
         messages,
       });
       const dynamicCompactThreshold = getDynamicCompactThreshold(args.tokenBudget);
+      const predictiveTargetSize = resolvePredictiveCompactionTarget({
+        currentTokenCount,
+        threshold: dynamicCompactThreshold,
+      });
       if (
-        dynamicCompactThreshold != null &&
         currentTokenCount != null &&
-        currentTokenCount >= dynamicCompactThreshold
+        dynamicCompactThreshold != null &&
+        predictiveTargetSize != null
       ) {
+        logPredictiveCompactionAttempt({
+          logger,
+          phase: "afterTurn",
+          sessionId: args.sessionId,
+          currentTokenCount,
+          threshold: dynamicCompactThreshold,
+          targetSize: predictiveTargetSize,
+          tokenBudget: args.tokenBudget,
+        });
         const compactionResult = await runCompaction({
           sessionId: args.sessionId,
+          targetSize: predictiveTargetSize,
           tokenBudget: args.tokenBudget,
           force: true,
           currentTokenCount,
         });
-        if (!compactionResult.ok || !compactionResult.compacted) {
-          logger.warn?.(
-            `LibraVDB afterTurn predictive compaction did not compact at ${currentTokenCount} tokens ` +
-            `(threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction declined"}`,
-          );
-        }
+        logPredictiveCompactionOutcome({
+          logger,
+          phase: "afterTurn",
+          sessionId: args.sessionId,
+          currentTokenCount,
+          threshold: dynamicCompactThreshold,
+          targetSize: predictiveTargetSize,
+          tokenBudget: args.tokenBudget,
+          compacted: compactionResult.compacted,
+          reason: compactionResult.reason,
+        });
       }
       return result;
     }

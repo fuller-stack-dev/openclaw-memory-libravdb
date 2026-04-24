@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildContextEngineFactory as createContextEngineFactory } from "../../src/context-engine.js";
 import { createRecallCache } from "../../src/recall-cache.js";
+import { createMemoryLogger } from "../helpers/logger.js";
 import type { LoggerLike, PluginConfig, SearchResult } from "../../src/types.js";
 
 const NOOP_LOGGER: LoggerLike = {
@@ -233,7 +234,8 @@ test("assemble triggers force compaction at dynamic 80% threshold before daemon 
     rpcTimeoutMs: 1000,
     compactionThresholdFraction: 0.8,
   };
-  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+  const logger = createMemoryLogger();
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache, logger);
 
   const assembled = await context.assemble({
     sessionId: "test-session",
@@ -246,12 +248,16 @@ test("assemble triggers force compaction at dynamic 80% threshold before daemon 
   assert.ok(compactParams, "Expected compact_session to be called");
   assert.equal(compactParams.sessionId, "test-session");
   assert.equal(compactParams.force, true);
-  assert.equal(compactParams.targetSize, 1000);
+  assert.equal(compactParams.targetSize, 799);
+  assert.equal(compactParams.currentTokenCount, 1008);
 
   const assembleParams = rpc.getLastCall("assemble_context_internal");
   assert.ok(assembleParams, "Expected assemble_context_internal to be called after compaction");
   assert.equal(assembleParams.config.compactThreshold, 800);
   assert.equal(assembled.messages[0]?.content, "ok");
+  assert.equal(logger.warns.length, 0);
+  assert.match(logger.infos[0] ?? "", /predictive compaction trigger phase=assemble/);
+  assert.match(logger.infos[1] ?? "", /predictive compaction completed phase=assemble/);
 });
 
 test("assemble prefers authoritative currentTokenCount for predictive compaction", async () => {
@@ -281,6 +287,7 @@ test("assemble prefers authoritative currentTokenCount for predictive compaction
   const compactParams = rpc.getLastCall("compact_session");
   assert.ok(compactParams, "Expected compact_session to be called");
   assert.equal(compactParams.currentTokenCount, 900);
+  assert.equal(compactParams.targetSize, 799);
 });
 
 test("assemble blocks daemon assembly when predictive compaction fails", async () => {
@@ -427,8 +434,9 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
     rpcTimeoutMs: 1000,
     compactionThresholdFraction: 0.8,
   };
+  const logger = createMemoryLogger();
 
-  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache);
+  const context = buildContextEngineFactory(async () => rpc as never, cfg, recallCache, logger);
 
   await context.afterTurn({
     sessionId: "test-session",
@@ -447,5 +455,8 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
   const compactParams = rpc.getLastCall("compact_session");
   assert.ok(compactParams, "Expected compact_session to be called");
   assert.equal(compactParams.currentTokenCount, 900);
-  assert.equal(compactParams.targetSize, 1000);
+  assert.equal(compactParams.targetSize, 799);
+  assert.equal(logger.warns.length, 0);
+  assert.match(logger.infos[0] ?? "", /predictive compaction trigger phase=afterTurn/);
+  assert.match(logger.infos[1] ?? "", /predictive compaction completed phase=afterTurn/);
 });

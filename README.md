@@ -66,6 +66,10 @@ Runtime requirements:
 - Node.js `>= 22`
 - a separately installed `libravdbd` daemon
 
+Compatibility note:
+
+- this plugin is currently verified against OpenClaw `2026.4.23`
+
 Default endpoints:
 
 - macOS/Linux user-local daemon: `unix:$HOME/.clawdb/run/libravdb.sock`
@@ -141,7 +145,7 @@ Use [Install](./docs/install.md) for daemon lifecycle commands and
 - Understand the design: [Problem](./docs/problem.md), [Architecture](./docs/architecture.md), [ADRs](./docs/architecture-decisions/README.md)
 - Operate safely: [Security](./docs/security.md), [Uninstall](./docs/uninstall.md)
 - Configure optional inputs: [Features](./docs/features.md), [Embedding profiles](./docs/embedding-profiles.md), [Models](./docs/models.md)
-- Tune or benchmark: [Performance and tuning](./docs/performance-and-tuning.md)
+- Advanced operations: [Performance and tuning](./docs/performance-and-tuning.md)
 - Work from source: [Development](./docs/development.md), [Contributing](./docs/contributing.md)
 
 ## From Source

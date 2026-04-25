@@ -10,15 +10,9 @@ import { createRecallCache } from "./recall-cache.js";
 import { createPluginRuntime } from "./plugin-runtime.js";
 import type { PluginConfig, SearchResult } from "./types.js";
 
-const MEMORY_ID = "libravdb-memory";
+export const MEMORY_ID = "libravdb-memory";
 
-export default definePluginEntry({
-  id: "libravdb-memory",
-  name: "LibraVDB Memory",
-  description: "Persistent vector memory with three-tier hybrid scoring",
-  kind: ["memory", "context-engine"],
-
-  register(api: OpenClawPluginApi) {
+export function register(api: OpenClawPluginApi) {
     const isFullMode = (api.registrationMode as string) === "full";
     const cfg = api.pluginConfig as PluginConfig;
 
@@ -49,13 +43,13 @@ export default definePluginEntry({
     }
 
     // Migrated from three legacy calls to a single registerMemoryCapability.
-    api.registerMemoryCapability("libravdb-memory", {
+    api.registerMemoryCapability(MEMORY_ID, {
       promptBuilder: buildMemoryPromptSection(runtime.getRpc, cfg, recallCache),
       runtime: buildMemoryRuntimeBridge(runtime.getRpc, cfg),
     });
 
     api.registerContextEngine(
-      "libravdb-memory",
+      MEMORY_ID,
       () => buildContextEngineFactory(runtime, cfg, recallCache, api.logger ?? console),
     );
 
@@ -76,5 +70,13 @@ export default definePluginEntry({
       await markdownIngestion.stop();
       await runtime.shutdown();
     });
-  },
+  }
+
+export default definePluginEntry({
+  id: MEMORY_ID,
+  name: "LibraVDB Memory",
+  description: "Persistent vector memory with three-tier hybrid scoring",
+  kind: ["memory", "context-engine"],
+
+  register,
 });

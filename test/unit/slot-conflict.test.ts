@@ -1,78 +1,104 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// Test the slot check behavior in src/index.ts register() logic.
-// We isolate the exact checks to verify they behave correctly.
+// Import the real register function from src/index.ts so tests actually
+// exercise the production code path.
+import { register, MEMORY_ID } from "../../src/index.js";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
-const MEMORY_ID = "libravdb-memory";
-
-function makeSlotCheck(cfg: {
+/** Builds a fake OpenClawPluginApi for register(). */
+function makeFakeApi(overrides: {
   registrationMode?: string;
   slotsMemory?: string;
-}): { memSlot: string | undefined; isFullMode: boolean } {
-  const api = {
-    registrationMode: cfg.registrationMode ?? "full",
+} = {}): OpenClawPluginApi {
+  return {
+    id: "test-plugin",
+    name: "Test",
+    description: "",
+    source: "test",
+    registrationMode: overrides.registrationMode ?? "full",
     config: {
       plugins: {
         slots: {
-          memory: cfg.slotsMemory,
+          memory: overrides.slotsMemory,
         },
       },
     },
-  };
-  const memSlot = api.config?.plugins?.slots?.memory;
-  const isFullMode = (api.registrationMode as string) === "full";
-  return { memSlot, isFullMode };
+    pluginConfig: {},
+    logger: {
+      error(_msg: string) {},
+      warn(_msg: string) {},
+      info(_msg: string) {},
+    },
+    registerMemoryCapability(_id: string, _cap: unknown) {},
+    registerContextEngine(_id: string, _factory: () => unknown) {},
+    on(_event: string, _handler: unknown) {},
+  } as unknown as OpenClawPluginApi;
 }
 
-test("slot check — ours: passes (does not throw)", () => {
-  const { memSlot } = makeSlotCheck({ slotsMemory: "libravdb-memory" });
-  const wouldThrow = !!(memSlot && memSlot !== MEMORY_ID && memSlot !== "none");
-  assert.ok(!wouldThrow, "should not throw when slot is libravdb-memory");
+// slot: "libravdb-memory" — no conflict, should not throw
+test("slot check — ours: register succeeds", () => {
+  const api = makeFakeApi({ slotsMemory: "libravdb-memory" });
+  assert.doesNotThrow(() => register(api), "should not throw when slot is libravdb-memory");
 });
 
-test("slot check — other plugin: throws", () => {
-  const { memSlot } = makeSlotCheck({ slotsMemory: "memory-lancedb" });
-  const wouldThrow = !!(memSlot && memSlot !== MEMORY_ID && memSlot !== "none");
-  assert.ok(wouldThrow, "should throw when slot is taken by memory-lancedb");
+// slot: another plugin — should throw with slot name in message
+test("slot check — other plugin: register throws", () => {
+  const api = makeFakeApi({ slotsMemory: "memory-lancedb" });
+  assert.throws(
+    () => register(api),
+    /memory-lancedb/,
+    "error message should name the conflicting plugin",
+  );
+  assert.throws(
+    () => register(api),
+    /libravdb-memory/,
+    "error message should name this plugin",
+  );
 });
 
-test("slot check — unset: passes (no conflict)", () => {
-  const { memSlot } = makeSlotCheck({ slotsMemory: undefined });
-  const wouldThrow = !!(memSlot && memSlot !== MEMORY_ID && memSlot !== "none");
-  assert.ok(!wouldThrow, "should not throw when slot is unset");
+// slot: undefined — nobody owns it, should not throw
+test("slot check — unset: register succeeds", () => {
+  const api = makeFakeApi({ slotsMemory: undefined });
+  assert.doesNotThrow(() => register(api), "should not throw when slot is unset");
 });
 
-test("slot check — 'none': passes (memory disabled)", () => {
-  const { memSlot } = makeSlotCheck({ slotsMemory: "none" });
-  const wouldThrow = !!(memSlot && memSlot !== MEMORY_ID && memSlot !== "none");
-  assert.ok(!wouldThrow, "should not throw when slot is 'none' (memory disabled)");
+// slot: "none" — memory disabled, should not throw
+test("slot check — 'none': register succeeds", () => {
+  const api = makeFakeApi({ slotsMemory: "none" });
+  assert.doesNotThrow(() => register(api), "should not throw when slot is 'none'");
 });
 
+// registrationMode: "full" — registration proceeds
 test("registrationMode gate — 'full' allows registration", () => {
-  const { isFullMode } = makeSlotCheck({ registrationMode: "full" });
-  assert.ok(isFullMode, "full mode should allow registration");
+  const api = makeFakeApi({ registrationMode: "full", slotsMemory: "libravdb-memory" });
+  assert.doesNotThrow(() => register(api), "full mode should allow registration");
 });
 
-test("registrationMode gate — 'cli-metadata' blocks registration", () => {
-  const { isFullMode } = makeSlotCheck({ registrationMode: "cli-metadata" });
-  assert.ok(!isFullMode, "cli-metadata mode should block registration");
+// registrationMode: "cli-metadata" — returns early, no throws
+test("registrationMode gate — 'cli-metadata' returns early without throwing", () => {
+  const api = makeFakeApi({ registrationMode: "cli-metadata", slotsMemory: "memory-lancedb" });
+  // In cli-metadata mode, register() returns before the slot check runs.
+  // No error should be thrown — mode guard is first.
+  assert.doesNotThrow(() => register(api), "cli-metadata mode should return early, slot check never fires");
 });
 
-test("registrationMode gate — 'setup-only' blocks registration", () => {
-  const { isFullMode } = makeSlotCheck({ registrationMode: "setup-only" });
-  assert.ok(!isFullMode, "setup-only mode should block registration");
+// registrationMode: "setup-only" — returns early, no throws
+test("registrationMode gate — 'setup-only' returns early without throwing", () => {
+  const api = makeFakeApi({ registrationMode: "setup-only", slotsMemory: "memory-lancedb" });
+  assert.doesNotThrow(() => register(api), "setup-only mode should return early");
 });
 
-test("combined — cli-metadata with other slot: still blocked by mode gate first", () => {
-  // In register(), the mode check happens before the slot check.
-  // When mode is not "full", we return early — slot check never runs.
-  const { isFullMode, memSlot } = makeSlotCheck({
-    registrationMode: "cli-metadata",
-    slotsMemory: "memory-lancedb",
-  });
-  assert.ok(!isFullMode, "mode gate blocks first");
-  // If mode gate passes (full), slot check would run:
-  const slotWouldThrow = !!(memSlot && memSlot !== MEMORY_ID && memSlot !== "none");
-  assert.ok(slotWouldThrow, "slot is correctly detected as conflicting");
+// cli-metadata mode: slot check skipped because mode gate runs first
+// This is the key test that validates ordering — in cli-metadata, even a
+// conflicting slot does NOT throw because register() exits before the slot check.
+test("combined — cli-metadata with conflicting slot: mode gate blocks before slot check", () => {
+  const api = makeFakeApi({ registrationMode: "cli-metadata", slotsMemory: "memory-lancedb" });
+  let threw = false;
+  try {
+    register(api);
+  } catch {
+    threw = true;
+  }
+  assert.ok(!threw, "no error in cli-metadata even with conflicting slot — mode guard exits first");
 });

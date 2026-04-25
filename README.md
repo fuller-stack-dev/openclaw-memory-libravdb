@@ -51,9 +51,6 @@ Then activate both plugin slots in `~/.openclaw/openclaw.json`:
 
 Verify the daemon and plugin:
 
-```bash
-openclaw memory status
-```
 
 Healthy output should show `Sidecar=running`, stored memory counts, the active
 gate threshold, and the loaded embedding profile.

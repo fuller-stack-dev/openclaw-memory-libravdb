@@ -56,7 +56,7 @@ type CliProgram = CliCommand;
 
 export function registerMemoryCli(
   api: OpenClawPluginApi,
-  runtime: PluginRuntime,
+  runtime: PluginRuntime | null,
   cfg: PluginConfig,
   logger: LoggerLike = console,
 ): void {
@@ -64,10 +64,23 @@ export function registerMemoryCli(
     return;
   }
 
+  const isFullMode = runtime !== null;
+
   api.registerCli(
     ({ program }) => {
       const root = ensureCommand(program, "memory")
         .description("Manage LibraVDB memory");
+
+      if (!isFullMode) {
+        // cli-metadata mode: register structure only so `openclaw memory --help` works.
+        // No runtime available — do not attach action handlers.
+        ensureCommand(root, "status").description("Show sidecar health, record counts, and active thresholds");
+        ensureCommand(root, "flush").description("Wipe a durable memory namespace after confirmation");
+        ensureCommand(root, "export").description("Stream stored memories as newline-delimited JSON");
+        ensureCommand(root, "journal").description("Inspect internal lifecycle journal hints");
+        ensureCommand(root, "dream-promote").description("Promote vetted dream diary entries into the dedicated dream collection");
+        return;
+      }
 
       ensureCommand(root, "status")
         .description("Show sidecar health, record counts, and active thresholds")

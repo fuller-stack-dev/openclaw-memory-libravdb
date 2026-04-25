@@ -50,7 +50,7 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
       promptBuilder?: MemoryPromptSectionBuilder;
       runtime?: unknown;
     }): void;
-    registerMemoryPromptSection(builder: MemoryPromptSectionBuilder): void;
+    registerMemoryPromptSection?(builder: MemoryPromptSectionBuilder): void;
     registerMemoryFlushPlan?(resolver: unknown): void;
     registerMemoryRuntime?(runtime: unknown): void;
     registerMemoryEmbeddingProvider?(provider: unknown): void;

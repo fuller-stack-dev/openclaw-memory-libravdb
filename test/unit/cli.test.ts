@@ -149,6 +149,68 @@ test("full CLI registration exposes standard memory commands and LibraVDB operat
   assert.ok(search.options.includes("--json"));
 });
 
+test("status command shuts the plugin runtime down after printing status", async () => {
+  let registered: RegisteredCli | null = null;
+  let shutdownCalls = 0;
+  const api = {
+    config: selectedConfig,
+    registerCli(builder: unknown, opts: RegisteredCli["opts"]) {
+      registered = { builder: builder as RegisteredCli["builder"], opts };
+    },
+  };
+
+  registerMemoryCli(
+    api as never,
+    {
+      async getRpc() {
+        return {
+          async call(method: string) {
+            assert.equal(method, "status");
+            return {
+              ok: true,
+              turnCount: 3,
+              memoryCount: 3,
+              lifecycleHintCount: 1,
+              gatingThreshold: 0.35,
+              abstractiveReady: true,
+              embeddingProfile: "all-minilm-l6-v2",
+              message: "ok",
+            };
+          },
+        } as never;
+      },
+      getKernel() {
+        return null;
+      },
+      async emitLifecycleHint() {},
+      async shutdown() {
+        shutdownCalls += 1;
+      },
+    },
+    {},
+  );
+
+  assert.ok(registered);
+  const cli = registered as RegisteredCli;
+  const program = new FakeCommand("openclaw");
+  cli.builder({ program });
+
+  const memory = program.commands.find((command) => command.name() === "memory");
+  assert.ok(memory);
+  const status = memory.commands.find((command) => command.name() === "status");
+  assert.ok(status?.handler);
+
+  const originalTable = console.table;
+  console.table = (() => undefined) as typeof console.table;
+  try {
+    await status.handler?.({});
+  } finally {
+    console.table = originalTable;
+  }
+
+  assert.equal(shutdownCalls, 1);
+});
+
 test("non-full CLI registration exposes command structure without action handlers", () => {
   let registered: RegisteredCli | null = null;
   const api = {

@@ -108,14 +108,22 @@ export function registerMemoryCli(
         .option("--index", "Refresh delegated index state before printing status")
         .option("--fix", "Accepted for OpenClaw memory CLI compatibility")
         .option("--verbose", "Verbose logging")
-        .action((opts) => void runStatus(runtime, cfg, logger, normalizeOptionBag(opts)));
+        .action(async (opts) => {
+          await runCliCommand(runtime, logger, async () => {
+            await runStatus(runtime, cfg, logger, normalizeOptionBag(opts));
+          });
+        });
 
       ensureCommand(root, "index")
         .description("Refresh delegated LibraVDB memory index state")
         .option("--agent <id>", "Agent id")
         .option("--force", "Force refresh where supported")
         .option("--verbose", "Verbose logging")
-        .action((opts) => void runIndex(runtime, cfg, normalizeOptionBag(opts), logger));
+        .action(async (opts) => {
+          await runCliCommand(runtime, logger, async () => {
+            await runIndex(runtime, cfg, normalizeOptionBag(opts), logger);
+          });
+        });
 
       const search = ensureCommand(root, "search")
         .description("Search LibraVDB memory")
@@ -125,15 +133,17 @@ export function registerMemoryCli(
         .option("--min-score <n>", "Minimum score")
         .option("--json", "Print JSON");
       search.argument?.("[query]", "Search query");
-      search.action((queryOrOpts, maybeOpts) =>
-        void runSearch(
-          runtime,
-          cfg,
-          normalizeQueryArg(queryOrOpts),
-          normalizeActionOptions(queryOrOpts, maybeOpts),
-          logger,
-        ),
-      );
+      search.action(async (queryOrOpts, maybeOpts) => {
+        await runCliCommand(runtime, logger, async () => {
+          await runSearch(
+            runtime,
+            cfg,
+            normalizeQueryArg(queryOrOpts),
+            normalizeActionOptions(queryOrOpts, maybeOpts),
+            logger,
+          );
+        });
+      });
 
       const flush = ensureCommand(root, "flush")
         .description("Wipe a durable memory namespace after confirmation");
@@ -145,19 +155,31 @@ export function registerMemoryCli(
       flush.option("--session-key <sessionKey>", "Session key whose derived durable namespace should be deleted");
       flush
         .option("--yes", "Skip the confirmation prompt")
-        .action((opts) => void runFlush(runtime, normalizeOptionBag(opts), logger));
+        .action(async (opts) => {
+          await runCliCommand(runtime, logger, async () => {
+            await runFlush(runtime, normalizeOptionBag(opts), logger);
+          });
+        });
 
       const exportCmd = ensureCommand(root, "export")
         .description("Stream stored memories as newline-delimited JSON");
       exportCmd.option("--user-id <userId>", "Restrict export to a single user namespace");
       exportCmd.option("--session-key <sessionKey>", "Restrict export to a derived session-key namespace");
-      exportCmd.action((opts) => void runExport(runtime, normalizeOptionBag(opts), logger));
+      exportCmd.action(async (opts) => {
+        await runCliCommand(runtime, logger, async () => {
+          await runExport(runtime, normalizeOptionBag(opts), logger);
+        });
+      });
 
       const journal = ensureCommand(root, "journal")
         .description("Inspect internal lifecycle journal hints");
       journal.option("--session-id <sessionId>", "Restrict journal entries to one session id");
       journal.option("--limit <limit>", "Maximum journal entries to show");
-      journal.action((opts) => void runJournal(runtime, normalizeOptionBag(opts), logger));
+      journal.action(async (opts) => {
+        await runCliCommand(runtime, logger, async () => {
+          await runJournal(runtime, normalizeOptionBag(opts), logger);
+        });
+      });
 
       const dreamPromote = ensureCommand(root, "dream-promote")
         .description("Promote vetted dream diary entries into the dedicated dream collection");
@@ -168,7 +190,11 @@ export function registerMemoryCli(
         dreamPromote.option("--user-id <userId>", "User id whose dream collection should receive the promotion");
         dreamPromote.option("--dream-file <path>", "Dream diary markdown file to promote from");
       }
-      dreamPromote.action((opts) => void runDreamPromote(runtime, normalizeOptionBag(opts), logger));
+      dreamPromote.action(async (opts) => {
+        await runCliCommand(runtime, logger, async () => {
+          await runDreamPromote(runtime, normalizeOptionBag(opts), logger);
+        });
+      });
     },
     {
       descriptors: [MEMORY_CLI_DESCRIPTOR],
@@ -187,6 +213,22 @@ function ensureCommand(parent: CliCommand, name: string): CliCommand {
     return existing;
   }
   return parent.command(name);
+}
+
+async function runCliCommand(
+  runtime: PluginRuntime,
+  logger: LoggerLike,
+  action: () => Promise<void>,
+): Promise<void> {
+  try {
+    await action();
+  } finally {
+    try {
+      await runtime.shutdown();
+    } catch (error) {
+      logger.warn?.(`LibraVDB CLI shutdown failed: ${formatError(error)}`);
+    }
+  }
 }
 
 async function runStatus(

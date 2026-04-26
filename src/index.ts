@@ -1,5 +1,6 @@
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { registerMemoryCli } from "./cli.js";
+import { PLUGIN_ID, registerMemoryCliMetadata } from "./cli-descriptors.js";
 import { buildContextEngineFactory } from "./context-engine.js";
 import { createBeforeResetHook, createSessionEndHook } from "./lifecycle-hooks.js";
 import { createDreamPromotionHandle } from "./dream-promotion.js";
@@ -11,12 +12,17 @@ import { createPluginRuntime } from "./plugin-runtime.js";
 import type { PluginConfig, SearchResult } from "./types.js";
 
 export default definePluginEntry({
-  id: "libravdb-memory",
+  id: PLUGIN_ID,
   name: "LibraVDB Memory",
   description: "Persistent vector memory with three-tier hybrid scoring",
   kind: ["memory", "context-engine"],
 
   register(api: OpenClawPluginApi) {
+    if (api.registrationMode === "cli-metadata") {
+      registerMemoryCliMetadata(api);
+      return;
+    }
+
     const cfg = api.pluginConfig as PluginConfig;
     const recallCache = createRecallCache<SearchResult>();
     const runtime = createPluginRuntime(cfg, api.logger ?? console);

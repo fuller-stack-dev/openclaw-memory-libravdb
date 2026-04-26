@@ -7,6 +7,11 @@
     "memory",
     "context-engine"
   ],
+  "activation": {
+    "onCommands": [
+      "memory"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

@@ -1,8 +1,10 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import { MEMORY_CLI_DESCRIPTOR, isMemorySlotSelected } from "./cli-descriptors.js";
 import { resolveDurableNamespace } from "./durable-namespace.js";
 import { promoteDreamDiaryFile } from "./dream-promotion.js";
+import { buildMemoryRuntimeBridge } from "./memory-runtime.js";
 import type { PluginRuntime } from "./plugin-runtime.js";
 import type { LoggerLike, PluginConfig } from "./types.js";
 
@@ -28,11 +30,21 @@ type ExportResult = {
 
 type CliOptionBag = {
   dreamFile?: string;
+  query?: string;
   userId?: string;
+  agent?: string;
   sessionKey?: string;
   sessionId?: string;
   limit?: string | number;
+  maxResults?: string | number;
+  minScore?: string | number;
   yes?: boolean;
+  json?: boolean;
+  deep?: boolean;
+  index?: boolean;
+  fix?: boolean;
+  force?: boolean;
+  verbose?: boolean;
 };
 
 type JournalResult = {
@@ -46,9 +58,10 @@ type CliCommand = {
   commands?: CliCommand[];
   command(name: string): CliCommand;
   description(text: string): CliCommand;
+  argument?(name: string, description: string): CliCommand;
   option(flags: string, description: string): CliCommand;
   requiredOption?(flags: string, description: string): CliCommand;
-  action(handler: (opts?: CliOptionBag) => unknown): CliCommand;
+  action(handler: (...args: unknown[]) => unknown): CliCommand;
   name?(): string;
 };
 
@@ -63,6 +76,9 @@ export function registerMemoryCli(
   if (!api.registerCli) {
     return;
   }
+  if (!isMemorySlotSelected(api)) {
+    return;
+  }
 
   api.registerCli(
     ({ program }) => {
@@ -71,7 +87,38 @@ export function registerMemoryCli(
 
       ensureCommand(root, "status")
         .description("Show sidecar health, record counts, and active thresholds")
-        .action(() => void runStatus(runtime, cfg, logger));
+        .option("--agent <id>", "Agent id")
+        .option("--json", "Print JSON")
+        .option("--deep", "Probe daemon readiness")
+        .option("--index", "Refresh delegated index state before printing status")
+        .option("--fix", "Accepted for OpenClaw memory CLI compatibility")
+        .option("--verbose", "Verbose logging")
+        .action((opts) => void runStatus(runtime, cfg, logger, normalizeOptionBag(opts)));
+
+      ensureCommand(root, "index")
+        .description("Refresh delegated LibraVDB memory index state")
+        .option("--agent <id>", "Agent id")
+        .option("--force", "Force refresh where supported")
+        .option("--verbose", "Verbose logging")
+        .action((opts) => void runIndex(runtime, cfg, normalizeOptionBag(opts), logger));
+
+      const search = ensureCommand(root, "search")
+        .description("Search LibraVDB memory")
+        .option("--query <text>", "Search query (alternative to positional argument)")
+        .option("--agent <id>", "Agent id")
+        .option("--max-results <n>", "Max results")
+        .option("--min-score <n>", "Minimum score")
+        .option("--json", "Print JSON");
+      search.argument?.("[query]", "Search query");
+      search.action((queryOrOpts, maybeOpts) =>
+        void runSearch(
+          runtime,
+          cfg,
+          normalizeQueryArg(queryOrOpts),
+          normalizeActionOptions(queryOrOpts, maybeOpts),
+          logger,
+        ),
+      );
 
       const flush = ensureCommand(root, "flush")
         .description("Wipe a durable memory namespace after confirmation");
@@ -83,19 +130,19 @@ export function registerMemoryCli(
       flush.option("--session-key <sessionKey>", "Session key whose derived durable namespace should be deleted");
       flush
         .option("--yes", "Skip the confirmation prompt")
-        .action((opts) => void runFlush(runtime, opts, logger));
+        .action((opts) => void runFlush(runtime, normalizeOptionBag(opts), logger));
 
       const exportCmd = ensureCommand(root, "export")
         .description("Stream stored memories as newline-delimited JSON");
       exportCmd.option("--user-id <userId>", "Restrict export to a single user namespace");
       exportCmd.option("--session-key <sessionKey>", "Restrict export to a derived session-key namespace");
-      exportCmd.action((opts) => void runExport(runtime, opts, logger));
+      exportCmd.action((opts) => void runExport(runtime, normalizeOptionBag(opts), logger));
 
       const journal = ensureCommand(root, "journal")
         .description("Inspect internal lifecycle journal hints");
       journal.option("--session-id <sessionId>", "Restrict journal entries to one session id");
       journal.option("--limit <limit>", "Maximum journal entries to show");
-      journal.action((opts) => void runJournal(runtime, opts, logger));
+      journal.action((opts) => void runJournal(runtime, normalizeOptionBag(opts), logger));
 
       const dreamPromote = ensureCommand(root, "dream-promote")
         .description("Promote vetted dream diary entries into the dedicated dream collection");
@@ -106,16 +153,10 @@ export function registerMemoryCli(
         dreamPromote.option("--user-id <userId>", "User id whose dream collection should receive the promotion");
         dreamPromote.option("--dream-file <path>", "Dream diary markdown file to promote from");
       }
-      dreamPromote.action((opts) => void runDreamPromote(runtime, opts, logger));
+      dreamPromote.action((opts) => void runDreamPromote(runtime, normalizeOptionBag(opts), logger));
     },
     {
-      descriptors: [
-        {
-          name: "memory",
-          description: "Manage LibraVDB memory",
-          hasSubcommands: true,
-        },
-      ],
+      descriptors: [MEMORY_CLI_DESCRIPTOR],
     },
   );
 }
@@ -133,10 +174,22 @@ function ensureCommand(parent: CliCommand, name: string): CliCommand {
   return parent.command(name);
 }
 
-async function runStatus(runtime: PluginRuntime, cfg: PluginConfig, logger: LoggerLike): Promise<void> {
+async function runStatus(
+  runtime: PluginRuntime,
+  cfg: PluginConfig,
+  logger: LoggerLike,
+  opts: CliOptionBag = {},
+): Promise<void> {
+  if (opts.index) {
+    await runIndex(runtime, cfg, { ...opts, verbose: false }, logger, { quiet: true });
+  }
   try {
     const rpc = await runtime.getRpc();
     const status = await rpc.call<StatusResult>("status", {});
+    if (opts.json) {
+      console.log(JSON.stringify({ status }, null, 2));
+      return;
+    }
     console.table({
       Sidecar: status.ok ? "running" : "down",
       "Turns stored": status.turnCount ?? 0,
@@ -149,6 +202,23 @@ async function runStatus(runtime: PluginRuntime, cfg: PluginConfig, logger: Logg
     });
   } catch (error) {
     logger.error(`LibraVDB status unavailable: ${formatError(error)}`);
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            status: {
+              ok: false,
+              message: formatError(error),
+              gatingThreshold: cfg.ingestionGateThreshold ?? 0.35,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      process.exitCode = 1;
+      return;
+    }
     console.table({
       Sidecar: "down",
       "Turns stored": "n/a",
@@ -159,6 +229,100 @@ async function runStatus(runtime: PluginRuntime, cfg: PluginConfig, logger: Logg
       "Embedding profile": "unknown",
       Message: formatError(error),
     });
+    process.exitCode = 1;
+  }
+}
+
+async function runIndex(
+  runtime: PluginRuntime,
+  cfg: PluginConfig,
+  opts: CliOptionBag | undefined,
+  logger: LoggerLike,
+  params: { quiet?: boolean } = {},
+): Promise<void> {
+  try {
+    const bridge = buildMemoryRuntimeBridge(runtime.getRpc, cfg);
+    const { manager } = await bridge.getMemorySearchManager({
+      agentId: opts?.agent,
+      purpose: "status",
+    });
+    await manager.sync?.({
+      reason: "cli",
+      force: Boolean(opts?.force),
+    });
+    const status = manager.status();
+    if (status.ok === false) {
+      logger.error(`LibraVDB index refresh unavailable: ${status.message ?? "sidecar unavailable"}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (opts?.verbose && !params.quiet) {
+      console.table({
+        Provider: status.provider ?? "libravdb",
+        Model: status.model ?? status.embeddingProfile ?? "unknown",
+        "Turns stored": status.turnCount ?? 0,
+        "Memories stored": status.memoryCount ?? 0,
+        Message: status.message ?? "ok",
+      });
+    }
+    if (!params.quiet) {
+      console.log("LibraVDB memory index refresh delegated to the sidecar.");
+    }
+  } catch (error) {
+    logger.error(`LibraVDB index refresh failed: ${formatError(error)}`);
+    process.exitCode = 1;
+  }
+}
+
+async function runSearch(
+  runtime: PluginRuntime,
+  cfg: PluginConfig,
+  queryArg: string | undefined,
+  opts: CliOptionBag | undefined,
+  logger: LoggerLike,
+): Promise<void> {
+  const query = opts?.query?.trim() || queryArg?.trim();
+  if (!query) {
+    logger.error("LibraVDB search requires a query. Provide a positional query or --query <text>.");
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    const bridge = buildMemoryRuntimeBridge(runtime.getRpc, cfg);
+    const { manager } = await bridge.getMemorySearchManager({
+      agentId: opts?.agent,
+    });
+    const maxResults = normalizeLimit(opts?.maxResults ?? opts?.limit);
+    const minScore = normalizeNumber(opts?.minScore);
+    const results = (await manager.search(
+      {
+        query,
+        ...(maxResults ? { maxResults } : {}),
+        ...(minScore !== undefined ? { minScore } : {}),
+      },
+    )) as Array<{
+      path: string;
+      startLine: number;
+      endLine: number;
+      score: number;
+      snippet: string;
+    }>;
+    if (opts?.json) {
+      console.log(JSON.stringify({ results }, null, 2));
+      return;
+    }
+    if (results.length === 0) {
+      console.log("No matches.");
+      return;
+    }
+    for (const result of results) {
+      console.log(`${result.score.toFixed(3)} ${result.path}:${result.startLine}-${result.endLine}`);
+      console.log(result.snippet);
+      console.log("");
+    }
+  } catch (error) {
+    logger.error(`LibraVDB search failed: ${formatError(error)}`);
     process.exitCode = 1;
   }
 }
@@ -269,6 +433,34 @@ function normalizeLimit(limit: string | number | undefined): number | undefined 
     }
   }
   return undefined;
+}
+
+function normalizeNumber(value: string | number | undefined): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function normalizeOptionBag(value: unknown): CliOptionBag {
+  return value && typeof value === "object" ? (value as CliOptionBag) : {};
+}
+
+function normalizeActionOptions(queryOrOpts: unknown, maybeOpts: unknown): CliOptionBag {
+  if (maybeOpts && typeof maybeOpts === "object") {
+    return maybeOpts as CliOptionBag;
+  }
+  return normalizeOptionBag(queryOrOpts);
+}
+
+function normalizeQueryArg(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function resolveCliNamespace(opts: CliOptionBag | undefined): string | undefined {

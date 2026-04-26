@@ -118,6 +118,8 @@ Before exposing OpenClaw over remote channels, read [Security](./docs/security.m
 
 ```bash
 openclaw memory status
+openclaw memory index --force
+openclaw memory search "prior context"
 openclaw memory export --user-id <userId>
 openclaw memory flush --user-id <userId>
 openclaw memory journal --limit 50

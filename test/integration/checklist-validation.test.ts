@@ -14,8 +14,9 @@ test("manifest and package metadata satisfy checklist structure", async () => {
   assert.equal(manifest.configSchema.additionalProperties, false);
   assert.deepEqual(
     Object.keys(manifest).sort(),
-    ["configSchema", "description", "id", "kind", "name", "version"],
+    ["activation", "configSchema", "description", "id", "kind", "name", "version"],
   );
+  assert.deepEqual(manifest.activation, { onCommands: ["memory"] });
   assert.equal(manifest.version, pkg.version);
 
   assert.equal(pkg.main, "./dist/index.js");
@@ -23,6 +24,7 @@ test("manifest and package metadata satisfy checklist structure", async () => {
   assert.ok(Array.isArray(pkg.openclaw?.extensions));
   assert.ok(pkg.openclaw.extensions.includes("./dist/index.js"));
   assert.equal(pkg.exports["."].import, "./dist/index.js");
+  assert.ok(pkg.files.includes("cli-metadata.js"));
   assert.match(hookMd, /name:\s*libravdb-memory/);
 });
 
@@ -33,15 +35,18 @@ test("source checklist invariants are present in host code", async () => {
   assert.match(indexTs, /openclaw\/plugin-sdk\/plugin-entry/);
   assert.match(indexTs, /api\.pluginConfig/);
   assert.match(indexTs, /kind:\s*\["memory",\s*"context-engine"\]/);
-  assert.match(indexTs, /registerContextEngine\("libravdb-memory"/);
-  assert.match(indexTs, /registerMemoryPromptSection/);
-  assert.match(indexTs, /registerMemoryRuntime\?\.\(/);
+  assert.match(indexTs, /export const MEMORY_ID = "libravdb-memory"/);
+  assert.match(indexTs, /registerContextEngine\(\s*MEMORY_ID/s);
+  assert.match(indexTs, /registerMemoryCapability\(MEMORY_ID/);
+  assert.match(indexTs, /api\.config\?\.plugins\?\.slots\?\.memory/);
   assert.match(indexTs, /api\.on\("before_reset"/);
   assert.match(indexTs, /api\.on\("session_end"/);
   assert.match(indexTs, /api\.on\("gateway_stop"/);
+  assert.match(indexTs, /registrationMode === "cli-metadata"/);
+  assert.doesNotMatch(indexTs, /registerMemoryPromptSection/);
+  assert.doesNotMatch(indexTs, /registerMemoryRuntime\?\.\(/);
   assert.doesNotMatch(indexTs, /api\.on\("shutdown"/);
   assert.doesNotMatch(indexTs, /async register\s*\(/);
   assert.match(memoryProviderTs, /availableTools/);
   assert.match(memoryProviderTs, /context-engine assembler/);
-  assert.doesNotMatch(indexTs, /api\.config/);
 });

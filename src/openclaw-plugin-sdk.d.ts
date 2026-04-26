@@ -8,9 +8,10 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
     commands?: OpenClawCliCommand[];
     command(name: string): OpenClawCliCommand;
     description(text: string): OpenClawCliCommand;
+    argument?(name: string, description: string): OpenClawCliCommand;
     option(flags: string, description: string): OpenClawCliCommand;
     requiredOption?(flags: string, description: string): OpenClawCliCommand;
-    action(handler: (opts?: Record<string, unknown>) => unknown): OpenClawCliCommand;
+    action(handler: (...args: unknown[]) => unknown): OpenClawCliCommand;
     name?(): string;
   }
 

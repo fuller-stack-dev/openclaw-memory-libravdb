@@ -14,6 +14,8 @@ type MemorySearchParams = {
   q?: string;
   k?: number;
   limit?: number;
+  maxResults?: number;
+  minScore?: number;
   topK?: number;
   userId?: string;
   agentId?: string;
@@ -70,7 +72,8 @@ function createMemorySearchManager(
       const params = legacyCall
         ? {
             query: queryOrParams,
-            limit: opts.limit ?? opts.k ?? opts.topK,
+            limit: opts.limit ?? opts.k ?? opts.maxResults ?? opts.topK,
+            minScore: opts.minScore,
             sessionId: opts.sessionId,
             sessionKey: opts.sessionKey,
             userId: opts.userId,
@@ -91,7 +94,8 @@ function createMemorySearchManager(
         agentId: firstString(params.agentId, params.context?.agentId, defaults.agentId),
         fallback: sessionId ? `session:${sessionId}` : undefined,
       });
-      const k = normalizePositiveInteger(params.k, params.limit, params.topK, cfg.topK, 8);
+      const k = normalizePositiveInteger(params.k, params.limit, params.maxResults, params.topK, cfg.topK, 8);
+      const minScore = normalizeNumber(params.minScore);
       const rpc = await getRpc();
 
       const result = dreamQuery.active
@@ -101,15 +105,19 @@ function createMemorySearchManager(
             k,
           })
         : await searchResolvedCollections(rpc, cfg, userId, sessionId, queryText, k);
+      const filteredResults =
+        minScore === undefined
+          ? result.results
+          : result.results.filter((item) => item.score >= minScore);
 
-      const legacyResults = result.results.map((item) => ({
+      const legacyResults = filteredResults.map((item) => ({
         ...item,
         content: item.text,
       }));
       if (legacyCall) {
         return { results: legacyResults };
       }
-      return result.results.map(toMemorySearchResult);
+      return filteredResults.map(toMemorySearchResult);
     },
     async readFile(params: { relPath: string; from?: number; lines?: number }) {
       const located = await loadSearchResultText(getRpc, params.relPath);
@@ -126,7 +134,7 @@ function createMemorySearchManager(
       // The plugin already owns per-turn ingest through the context engine.
       return { ingested: false, delegatedToContextEngine: true };
     },
-    async sync() {
+    async sync(_params?: { reason?: string; force?: boolean }) {
       cachedStatus = await readStatus(getRpc, defaults.purpose);
       return { synced: true, delegatedToContextEngine: true };
     },
@@ -280,4 +288,8 @@ function normalizePositiveInteger(...values: Array<number | undefined>): number 
     }
   }
   return 8;
+}
+
+function normalizeNumber(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

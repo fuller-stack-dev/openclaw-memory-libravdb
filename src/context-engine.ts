@@ -565,6 +565,10 @@ export function buildContextEngineFactory(
         userIdOverride: args.userId,
         sessionKey: args.sessionKey,
       });
+      logger.info?.(
+        `LibraVDB bootstrap sessionId=${args.sessionId} userId=${userId} ` +
+        `sessionKey=${args.sessionKey ?? "(none)"}`,
+      );
       const kernel = runtime.getKernel();
       if (kernel) {
         try {
@@ -593,22 +597,35 @@ export function buildContextEngineFactory(
         sessionKey: args.sessionKey,
       });
       const message = normalizeKernelMessage(args.message);
-      const kernel = runtime.getKernel();
-      if (kernel) {
-        return await kernel.ingestMessage({
-          sessionId: args.sessionId,
-          sessionKey: args.sessionKey,
+      logger.info?.(
+        `LibraVDB ingest sessionId=${args.sessionId} userId=${userId} ` +
+        `role=${message.role} heartbeat=${args.isHeartbeat ?? false} ` +
+        `contentLen=${message.content.length}`,
+      );
+      try {
+        const kernel = runtime.getKernel();
+        if (kernel) {
+          return await kernel.ingestMessage({
+            sessionId: args.sessionId,
+            sessionKey: args.sessionKey,
+            userId,
+            message,
+            isHeartbeat: args.isHeartbeat,
+          });
+        }
+        const rpc = await runtime.getRpc();
+        return await rpc.call("ingest_message_kernel", {
+          ...args,
           userId,
           message,
-          isHeartbeat: args.isHeartbeat,
         });
+      } catch (error) {
+        logger.warn?.(
+          `LibraVDB ingest failed sessionId=${args.sessionId}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
       }
-      const rpc = await runtime.getRpc();
-      return await rpc.call("ingest_message_kernel", {
-        ...args,
-        userId,
-        message,
-      });
     },
     async assemble(args: {
       sessionId: string;
@@ -740,20 +757,39 @@ export function buildContextEngineFactory(
         sessionKey: args.sessionKey,
       });
       const messages = normalizeKernelMessages(args.messages);
-      const kernel = runtime.getKernel();
-      const currentTokenCount = normalizeCurrentTokenCount(
-        typeof args.runtimeContext?.currentTokenCount === "number"
-          ? args.runtimeContext.currentTokenCount
-          : undefined,
+      const msgCount = messages.length;
+      logger.info?.(
+        `LibraVDB afterTurn sessionId=${args.sessionId} userId=${userId} ` +
+        `messageCount=${msgCount} heartbeat=${args.isHeartbeat ?? false}`,
       );
-      if (kernel) {
-        const result = await kernel.afterTurn({
-          sessionId: args.sessionId,
-          sessionKey: args.sessionKey,
+      try {
+        const kernel = runtime.getKernel();
+        const currentTokenCount = normalizeCurrentTokenCount(
+          typeof args.runtimeContext?.currentTokenCount === "number"
+            ? args.runtimeContext.currentTokenCount
+            : undefined,
+        );
+        if (kernel) {
+          const result = await kernel.afterTurn({
+            sessionId: args.sessionId,
+            sessionKey: args.sessionKey,
+            userId,
+            messages,
+            prePromptMessageCount: args.prePromptMessageCount,
+            isHeartbeat: args.isHeartbeat,
+          });
+          await performAfterTurnPredictiveCompaction({
+            sessionId: args.sessionId,
+            tokenBudget: args.tokenBudget,
+            currentTokenCount,
+          });
+          return result;
+        }
+        const rpc = await runtime.getRpc();
+        const result = await rpc.call("after_turn_kernel", {
+          ...args,
           userId,
           messages,
-          prePromptMessageCount: args.prePromptMessageCount,
-          isHeartbeat: args.isHeartbeat,
         });
         await performAfterTurnPredictiveCompaction({
           sessionId: args.sessionId,
@@ -761,19 +797,13 @@ export function buildContextEngineFactory(
           currentTokenCount,
         });
         return result;
+      } catch (error) {
+        logger.warn?.(
+          `LibraVDB afterTurn failed sessionId=${args.sessionId}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
       }
-      const rpc = await runtime.getRpc();
-      const result = await rpc.call("after_turn_kernel", {
-        ...args,
-        userId,
-        messages,
-      });
-      await performAfterTurnPredictiveCompaction({
-        sessionId: args.sessionId,
-        tokenBudget: args.tokenBudget,
-        currentTokenCount,
-      });
-      return result;
     }
   };
 }

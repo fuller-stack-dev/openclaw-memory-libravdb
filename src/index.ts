@@ -14,6 +14,8 @@ import type { PluginConfig, SearchResult } from "./types.js";
 export const MEMORY_ID = "libravdb-memory";
 
 export function register(api: OpenClawPluginApi) {
+  const logger = api.logger ?? console;
+
   if (api.registrationMode === "cli-metadata") {
     registerMemoryCliMetadata(api);
     return;
@@ -23,6 +25,12 @@ export function register(api: OpenClawPluginApi) {
   const isFullMode = mode === "full";
   const cfg = api.pluginConfig as PluginConfig;
 
+  logger.info?.(
+    `LibraVDB registering mode=${mode} full=${isFullMode} ` +
+    `userId=${cfg.userId ?? "(auto)"} ` +
+    `crossSessionRecall=${cfg.crossSessionRecall !== false}`,
+  );
+
   // OpenClaw lazy-loads plugin-owned CLI commands through discovery mode.
   // Provide a runtime there so subcommands attach real handlers, but keep the
   // long-lived memory/context-engine registrations gated to full mode only.
@@ -31,7 +39,14 @@ export function register(api: OpenClawPluginApi) {
     : null;
   registerMemoryCli(api, runtimeOrNull, cfg, api.logger ?? console);
 
-  if (!isFullMode) return;
+  if (!isFullMode) {
+    logger.warn?.(
+      `LibraVDB: registration mode is "${mode}", not "full". ` +
+      `Context engine hooks (ingest, afterTurn) are NOT registered. ` +
+      `Memory will not be written automatically — only CLI commands are available.`,
+    );
+    return;
+  }
 
   // TypeScript can't narrow through the ternary, so re-bind and guard.
   const runtime = runtimeOrNull;

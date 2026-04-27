@@ -66,6 +66,17 @@ function createMemorySearchManager(
   initialStatus: MemoryRuntimeStatus & Record<string, unknown>,
 ) {
   let cachedStatus = initialStatus;
+  let cachedIdentityUserId: string | null = null;
+
+  function getResolvedUserId(sessionKey: string | undefined): string {
+    if (cachedIdentityUserId !== null) return cachedIdentityUserId;
+    cachedIdentityUserId = resolveIdentity({
+      configUserId: cfg.userId,
+      identityPath: cfg.identityPath,
+      sessionKey,
+    }).userId;
+    return cachedIdentityUserId;
+  }
 
   return {
     async search(queryOrParams: string | MemorySearchParams = {}, opts: MemorySearchParams = {}) {
@@ -90,12 +101,9 @@ function createMemorySearchManager(
       const dreamQuery = detectDreamQuerySignal(queryText);
       const sessionId = firstString(params.sessionId, params.context?.sessionId);
       const explicitUserId = firstString(params.userId, params.context?.userId);
-      const resolvedUserId = explicitUserId
-        ?? resolveIdentity({
-            configUserId: cfg.userId,
-            identityPath: cfg.identityPath,
-            sessionKey: firstString(params.sessionKey, params.context?.sessionKey),
-          }).userId;
+      const resolvedUserId =
+        explicitUserId ??
+        getResolvedUserId(firstString(params.sessionKey, params.context?.sessionKey));
       const userId = resolveDurableNamespace({
         userId: resolvedUserId,
         sessionKey: firstString(params.sessionKey, params.context?.sessionKey),

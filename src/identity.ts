@@ -28,7 +28,7 @@ function resolveIdentityPath(configuredPath?: string): string {
   return join(home, ".openclaw", "libravdb-identity.json");
 }
 
-export type IdentitySource = "config" | "file" | "auto" | "session-key";
+export type IdentitySource = "config" | "file" | "auto" | "session-key" | "default";
 
 export type ResolvedIdentity = {
   userId: string;
@@ -46,7 +46,14 @@ type IdentityFile = {
   createdAt: string;
 };
 
-function deriveAutoId(): string {
+type DerivedParts = {
+  username: string;
+  host: string;
+  home: string;
+  homeHash: string;
+};
+
+function deriveIdentityParts(): DerivedParts {
   let username: string;
   let home: string;
 
@@ -66,19 +73,20 @@ function deriveAutoId(): string {
     .digest("hex")
     .slice(0, 8);
 
-  return `${username}@${host}#${homeHash}`;
+  return { username, host, home, homeHash };
 }
 
-function writeIdentityFile(path: string, userId: string): void {
+function deriveAutoId(parts: DerivedParts): string {
+  return `${parts.username}@${parts.host}#${parts.homeHash}`;
+}
+
+function writeIdentityFile(path: string, userId: string, parts: DerivedParts): void {
   const identity: IdentityFile = {
     userId,
     derivedFrom: {
-      username: userInfo().username,
-      hostname: hostname(),
-      homeHash: createHash("sha256")
-        .update(userInfo().homedir.replace(/\\/g, "/").toLowerCase())
-        .digest("hex")
-        .slice(0, 8),
+      username: parts.username,
+      hostname: parts.host,
+      homeHash: parts.homeHash,
       platform: process.platform,
     },
     createdAt: new Date().toISOString(),
@@ -87,7 +95,7 @@ function writeIdentityFile(path: string, userId: string): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true });
 
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   writeFileSync(tmp, JSON.stringify(identity, null, 2) + "\n");
   renameSync(tmp, path);
 }
@@ -126,20 +134,31 @@ export function resolveIdentity(params: {
     }
   }
 
-  // 3. Auto-derive and persist
+  // 3. Auto-derive; persist is best-effort — do not discard a valid derivation
+  //    just because the identity file can't be written.
+  let parts: DerivedParts;
   try {
-    const autoId = deriveAutoId();
-    writeIdentityFile(filePath, autoId);
-    params.logger?.info?.(
-      `LibraVDB: auto-derived identity "${autoId}" written to ${filePath}`,
-    );
-    return { userId: autoId, source: "auto" };
+    parts = deriveIdentityParts();
   } catch {
-    // 4. Last-resort: sessionKey isolation
     const fallback = params.sessionKey?.trim();
     if (fallback) {
       return { userId: `session-key:${fallback}`, source: "session-key" };
     }
-    return { userId: "default", source: "session-key" };
+    return { userId: "default", source: "default" };
   }
+
+  const autoId = deriveAutoId(parts);
+  try {
+    writeIdentityFile(filePath, autoId, parts);
+    params.logger?.info?.(
+      `LibraVDB: auto-derived identity "${autoId}" written to ${filePath}`,
+    );
+  } catch (error) {
+    params.logger?.warn?.(
+      `LibraVDB: failed to persist identity file at ${filePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return { userId: autoId, source: "auto" };
 }

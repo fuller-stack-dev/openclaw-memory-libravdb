@@ -6,7 +6,8 @@ export interface PluginConfig {
    *  share memories under user:{userId}. When unset, the plugin auto-derives
    *  identity from the OS and persists it to the identity file. */
   userId?: string;
-  /** Custom path to the identity JSON file. Defaults to
+  /** Custom path to the identity JSON file. When unset the plugin resolves
+   *  $OPENCLAW_STATE_DIR/libravdb-identity.json, falling back to
    *  ~/.openclaw/libravdb-identity.json. */
   identityPath?: string;
   /** When false, only session-scoped memories are retrieved. User-scoped

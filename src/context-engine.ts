@@ -14,7 +14,6 @@ import {
   CompactSessionResponse,
 } from "./generated/libravdb/ipc/v1/rpc_pb.js";
 import { resolveIdentity, type ResolvedIdentity } from "./identity.js";
-import { resolveScopes } from "./memory-scopes.js";
 
 type KernelCompatibleMessage = {
   role: string;

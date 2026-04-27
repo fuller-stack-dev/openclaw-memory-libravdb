@@ -302,10 +302,10 @@ createMarkdownIngestionHandle(cfg)
 
 > The full schema has many fields my analysis missed. Key corrections below:
 
-| My analysis entry | Actual value | Source |
-|-|-|---|
-| `embeddingBackend: "onnx" | "ollama" | "remote"` | ~~`embeddingBackend: "onnx" | "ollama" | "remote";`~~ **CORRECTED:** `"bundled" | "onnx-local" | "custom-local"` | plugin schema |
-| `summarizerBackend: "onnx" | "ollama" | "none"` | ~~`summarizerBackend: "onnx" | "ollama" | "none";`~~ **CORRECTED:** `"bundled" | "onnx-local" | "ollama-local" | "custom-local"` | plugin schema |
+| Field | My analysis | Corrected value | Source |
+|-|-|-|--|
+| `embeddingBackend` | `"bundled" | "onnx-local" | "custom-local"` | plugin schema |
+| `summarizerBackend` | `"bundled" | "onnx-local" | "ollama-local" | "custom-local"` | plugin schema |
 
 ### Additional fields missing from my analysis
 
@@ -323,7 +323,7 @@ createMarkdownIngestionHandle(cfg)
 - `compactModel` — model to use for compaction
 
 #### Gating (detailed weights)
-~~`gatingWeights.conversational` / `gatingWeights.technical`~~ **CORRECTED:**
+Corrected gating weights schema:
 ```json
 {
   "gatingWeights": {
@@ -370,7 +370,7 @@ createMarkdownIngestionHandle(cfg)
 - `logLevel` — `"debug" | "info" | "warn" | "error"`
 
 #### Dream promotion — missing from analysis
-- ~~`dreamPromotionEnabled`~~ — actual field: `dreamPromotionEnabled` (boolean, default false)
+- `dreamPromotionEnabled` (boolean, default false)
 - `dreamPromotionDiaryPath`, `dreamPromotionUserId`, `dreamPromotionDebounceMs` (default 150)
 
 > **Note:** The TypeScript `PluginConfig` interface (in `src/types.ts`) adds many fields not yet in the plugin schema JSON. The schema JSON is the canonical config surface; the TS interface may include future fields.

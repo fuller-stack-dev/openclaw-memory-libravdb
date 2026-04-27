@@ -105,7 +105,7 @@ The repository uses three CI workflows in `.github/workflows/`:
 | Workflow | Trigger | Purpose |
 |---|---|--|
 | `auto-release.yml` | Merged PR with `release:*` label | Bumps version (patch/minor/major), updates `package.json` and `openclaw.plugin.json`, creates git tag |
-| `github-release.yml` | New `v*` tag | Creates a GitHub release asset |
+| `github-release.yml` | New `v*` tag | Creates a GitHub release |
 | `publish.yml` (`publish-npm`) | New `v*` tag or manual dispatch | Compiles, verifies versions match, publishes to npm |
 
 To publish: merge a PR with a `release:patch`, `release:minor`, or `release:major`

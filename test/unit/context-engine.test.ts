@@ -231,6 +231,86 @@ test("context engine assemble keeps daemon result when exact recall RPC acquisit
   assert.match(warnings[0] ?? "", /exact recall skipped/);
 });
 
+test("exact recall extracts quoted phrases from user queries", async () => {
+  const rpc = new FakeRpc();
+  const phrase = "blue lobster preference";
+  rpc.searchResults = [
+    {
+      id: "fact-1",
+      score: 0.9,
+      text: `Remember this: "${phrase}" means Jay always picks the blue one.`,
+      metadata: { collection: "user:fixed-user" },
+    },
+  ];
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does "${phrase}" mean?`)],
+    prompt: `What does "${phrase}" mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.ok(
+    assembled.systemPromptAddition.includes('source="exact_recalled"'),
+    "exact recall should fire for quoted phrases",
+  );
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.ok(searchCall);
+  assert.equal(searchCall.params.text, phrase);
+});
+
+test("exact recall extracts mixed-case identifiers with separators", async () => {
+  const rpc = new FakeRpc();
+  const key = "UserPref_blueLobster_v2";
+  rpc.searchResults = [
+    {
+      id: "fact-1",
+      score: 0.8,
+      text: `${key} means Jay prefers the blue lobster path.`,
+      metadata: { collection: "user:fixed-user" },
+    },
+  ];
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${key} mean?`)],
+    prompt: `What does ${key} mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.ok(
+    assembled.systemPromptAddition.includes('source="exact_recalled"'),
+    "exact recall should fire for mixed-case identifiers",
+  );
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.ok(searchCall);
+  assert.equal(searchCall.params.text, key);
+});
+
+test("exact recall skips common query words even when in quoted phrases", async () => {
+  const rpc = new FakeRpc();
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  // All tokens are common query words — no exact recall should fire
+  await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "what does this mean")],
+    prompt: "what does this mean",
+    tokenBudget: 4000,
+  });
+
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.equal(searchCall ?? null, null, "exact recall should not fire for common words");
+});
+
 // ---------------------------------------------------------------------------
 // Identity stability: same userId across different sessions
 // ---------------------------------------------------------------------------

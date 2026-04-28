@@ -37,8 +37,16 @@ type OpenClawCompatibleAssembleResult = {
 const APPROX_CHARS_PER_TOKEN = 4;
 const ASSEMBLE_BUDGET_HEADROOM_TOKENS = 256;
 const DEFAULT_COMPACTION_THRESHOLD_FRACTION = 0.8;
-const EXACT_RECALL_TOKEN_RE = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}_\d{6,}\b/g;
+const STRUCTURED_MARKER_RE = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}_\d{6,}\b/g;
+const DISTINCTIVE_IDENTIFIER_RE = /\b([A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+){1,})\b/g;
+const QUOTED_PHRASE_RE = /"([^"]{4,})"|'([^']{4,})'/g;
 const EXACT_RECALL_SEARCH_K = 32;
+const EXACT_RECALL_MAX_TOKENS = 4;
+const COMMON_QUERY_WORDS = new Set([
+  "what", "does", "mean", "remember", "recall", "about", "this", "that",
+  "the", "and", "for", "with", "from", "your", "have", "been", "were",
+  "where", "when", "which", "there", "their", "would", "could", "should",
+]);
 
 type OpenClawCompatibleCompactResult = {
   ok: boolean;
@@ -365,7 +373,28 @@ export function normalizeKernelMessages(
 }
 
 function extractExactRecallTokens(text: string): string[] {
-  return Array.from(new Set(text.match(EXACT_RECALL_TOKEN_RE) ?? [])).slice(0, 4);
+  const tokens = new Set<string>();
+
+  for (const m of text.matchAll(STRUCTURED_MARKER_RE)) {
+    tokens.add(m[0]);
+  }
+
+  for (const m of text.matchAll(DISTINCTIVE_IDENTIFIER_RE)) {
+    const token = m[1]!;
+    if (COMMON_QUERY_WORDS.has(token.toLowerCase())) continue;
+    if (/\d/.test(token) || /[A-Z]/.test(token) && /[a-z]/.test(token)) {
+      tokens.add(token);
+    }
+  }
+
+  for (const m of text.matchAll(QUOTED_PHRASE_RE)) {
+    const phrase = (m[1] ?? m[2])!;
+    if (!COMMON_QUERY_WORDS.has(phrase.toLowerCase())) {
+      tokens.add(phrase);
+    }
+  }
+
+  return Array.from(tokens).slice(0, EXACT_RECALL_MAX_TOKENS);
 }
 
 function isExactRecallFact(text: string, token: string): boolean {

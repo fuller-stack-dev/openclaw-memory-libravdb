@@ -398,7 +398,20 @@ function extractExactRecallTokens(text: string): string[] {
 }
 
 function isExactRecallFact(text: string, token: string): boolean {
-  return text.includes(token) && /\bmeans\b/i.test(text);
+  return (
+    text.includes(token) &&
+    /\bmeans\b/i.test(text) &&
+    !isQuestionShapedRecallCandidate(text)
+  );
+}
+
+function isQuestionShapedRecallCandidate(text: string): boolean {
+  const normalized = text.trim();
+  return (
+    normalized.includes("?") ||
+    /\bwhat\s+does\b/i.test(normalized) ||
+    /^\s*(?:who|what|when|where|why|how)\b/i.test(normalized)
+  );
 }
 
 function rankExactRecallCandidate(result: SearchResult, token: string): number {
@@ -546,17 +559,23 @@ export function buildContextEngineFactory(
       queryText: string;
       userId: string;
       sessionId: string;
+      tokenBudget?: number;
     },
   ): Promise<OpenClawCompatibleAssembleResult> {
     if (cfg.crossSessionRecall === false) return assembled;
     const tokens = extractExactRecallTokens(args.queryText);
     if (tokens.length === 0) return assembled;
 
-    const existingContext = [
+    const existingBlocks = [
       assembled.systemPromptAddition,
       ...assembled.messages.map((message) => message.content),
-    ].join("\n");
-    const missingTokens = tokens.filter((token) => !isExactRecallFact(existingContext, token));
+    ]
+      .flatMap((block) => block.split(/\n+/))
+      .map((block) => block.trim())
+      .filter((block) => block.length > 0);
+    const missingTokens = tokens.filter(
+      (token) => !existingBlocks.some((block) => isExactRecallFact(block, token)),
+    );
     if (missingTokens.length === 0) return assembled;
 
     let rpc: Awaited<ReturnType<typeof runtime.getRpc>>;
@@ -594,6 +613,16 @@ export function buildContextEngineFactory(
 
     if (injectedFacts.length === 0) return assembled;
     const exactRecallAddition = buildExactRecallSystemPromptAddition(injectedFacts);
+    const additionTokens = approximateTokenCount(exactRecallAddition);
+    const effectiveBudget = normalizeTokenBudget(args.tokenBudget) != null
+      ? resolveEffectiveAssembleBudget(args.tokenBudget)
+      : undefined;
+    if (effectiveBudget != null && assembled.estimatedTokens + additionTokens > effectiveBudget) {
+      logger.warn?.(
+        `LibraVDB exact recall skipped sessionId=${args.sessionId}: addition exceeds token budget`,
+      );
+      return assembled;
+    }
     logger.info?.(
       `LibraVDB exact recall injected sessionId=${args.sessionId} ` +
       `tokens=${injectedFacts.length}`,
@@ -604,7 +633,7 @@ export function buildContextEngineFactory(
         assembled.systemPromptAddition,
         exactRecallAddition,
       ),
-      estimatedTokens: assembled.estimatedTokens + approximateTokenCount(exactRecallAddition),
+      estimatedTokens: assembled.estimatedTokens + additionTokens,
     };
   }
 
@@ -864,6 +893,7 @@ export function buildContextEngineFactory(
               queryText: args.prompt ?? messages[messages.length - 1]?.content ?? "",
               userId,
               sessionId: args.sessionId,
+              tokenBudget: args.tokenBudget,
             }),
             args.tokenBudget,
           );
@@ -894,6 +924,7 @@ export function buildContextEngineFactory(
             queryText: args.prompt ?? messages[messages.length - 1]?.content ?? "",
             userId,
             sessionId: args.sessionId,
+            tokenBudget: args.tokenBudget,
           }),
           args.tokenBudget,
         );

@@ -107,60 +107,24 @@ test("context engine ingest resolves config userId and passes it to daemon", asy
   assert.equal(msg.content, "remember this");
 });
 
-test("context engine afterTurn resolves config userId and ingests turn messages", async () => {
+test("context engine afterTurn resolves config userId and passes messages to daemon", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
   const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
 
-  const result = await engine.afterTurn({
+  await engine.afterTurn({
     sessionId: "s1",
     sessionKey: "sk1",
     messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
   });
 
-  const calls = rpc.calls.filter((c) => c.method === "ingest_message_kernel");
-  assert.equal(calls.length, 2, "both turn messages are persisted");
-  assert.equal(result.ingested, 2);
-  assert.equal(calls[0].params.sessionId, "s1");
-  assert.equal(calls[0].params.sessionKey, "sk1");
-  assert.equal(calls[0].params.userId, "fixed-user");
-  assert.deepEqual(calls.map((call) => call.params.message), [
-    makeMessage("user", "hello"),
-    makeMessage("assistant", "hi there"),
-  ]);
-});
-
-test("context engine afterTurn does not backfill when there are no new messages", async () => {
-  const rpc = new FakeRpc();
-  const cfg: PluginConfig = { userId: "fixed-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
-
-  const result = await engine.afterTurn({
-    sessionId: "s1",
-    sessionKey: "sk1",
-    messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
-    prePromptMessageCount: 2,
-  });
-
-  assert.equal(result.ingested, 0);
-  assert.equal(rpc.calls.filter((c) => c.method === "ingest_message_kernel").length, 0);
-});
-
-test("context engine afterTurn ingested count tracks successful writes", async () => {
-  const rpc = new FakeRpc();
-  const cfg: PluginConfig = { userId: "fixed-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
-
-  const result = await engine.afterTurn({
-    sessionId: "s1",
-    sessionKey: "sk1",
-    messages: [makeMessage("user", "hello"), makeMessage("assistant", "   ")],
-  });
-
-  assert.equal(result.ingested, 1);
-  const calls = rpc.calls.filter((c) => c.method === "ingest_message_kernel");
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].params.message, makeMessage("user", "hello"));
+  const call = rpc.calls.find((c) => c.method === "after_turn_kernel");
+  assert.ok(call, "after_turn_kernel RPC was called");
+  assert.equal(call.params.sessionId, "s1");
+  assert.equal(call.params.sessionKey, "sk1");
+  assert.equal(call.params.userId, "fixed-user");
+  const msgs = call.params.messages as Array<unknown>;
+  assert.equal(msgs.length, 2);
 });
 
 test("context engine assemble resolves config userId and passes it to daemon", async () => {

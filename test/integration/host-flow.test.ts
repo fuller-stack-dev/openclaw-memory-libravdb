@@ -449,7 +449,7 @@ test("compact omits invalid currentTokenCount values from the wire request", asy
   assert.equal("currentTokenCount" in params, false);
 });
 
-test("afterTurn persists new turn messages through ingest RPC", async () => {
+test("afterTurn forwards message arrays and pre-prompt counts correctly", async () => {
   const rpc = new StaticContractRpc();
   const recallCache = createRecallCache<SearchResult>();
   const cfg: PluginConfig = { rpcTimeoutMs: 1000 };
@@ -469,16 +469,13 @@ test("afterTurn persists new turn messages through ingest RPC", async () => {
     isHeartbeat: false,
   });
 
-  assert.deepEqual(rpc.calls.map((call) => call.method), [
-    "ingest_message_kernel",
-    "ingest_message_kernel",
-  ]);
-  const [first, second] = rpc.calls.map((call) => call.params);
-  assert.equal(first.sessionId, "test-session");
-  assert.equal(first.userId, "test-user");
-  assert.equal(first.isHeartbeat, false);
-  assert.deepEqual(first.message, mockMessages[0]);
-  assert.deepEqual(second.message, mockMessages[1]);
+  const params = rpc.getLastCall("after_turn_kernel");
+  assert.ok(params, "Expected after_turn_kernel to be called");
+  assert.equal(params.sessionId, "test-session");
+  assert.equal(params.userId, "test-user");
+  assert.equal(params.prePromptMessageCount, 1);
+  assert.equal(params.isHeartbeat, false);
+  assert.deepEqual(params.messages, mockMessages);
 });
 
 test("afterTurn triggers predictive compaction from runtimeContext currentTokenCount", async () => {
@@ -507,7 +504,7 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
 
   assert.deepEqual(
     rpc.calls.map((call) => call.method),
-    ["ingest_message_kernel", "ingest_message_kernel", "compact_session"],
+    ["after_turn_kernel", "compact_session"],
   );
 
   const compactParams = rpc.getLastCall("compact_session");
@@ -543,7 +540,7 @@ test("afterTurn does not trigger predictive compaction without authoritative cur
 
   assert.deepEqual(
     rpc.calls.map((call) => call.method),
-    ["ingest_message_kernel", "ingest_message_kernel"],
+    ["after_turn_kernel"],
   );
   assert.equal(rpc.getLastCall("compact_session"), null);
 });

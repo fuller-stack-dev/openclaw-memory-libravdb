@@ -364,31 +364,6 @@ export function normalizeKernelMessages(
   return messages.map((message) => normalizeKernelMessage(message));
 }
 
-function selectAfterTurnIngestMessages(
-  messages: KernelCompatibleMessage[],
-  prePromptMessageCount: number | undefined,
-): KernelCompatibleMessage[] {
-  const rawStart =
-    typeof prePromptMessageCount === "number" && Number.isFinite(prePromptMessageCount)
-      ? Math.floor(prePromptMessageCount)
-      : 0;
-  const start = Math.max(0, Math.min(messages.length, rawStart));
-  const selected = messages.slice(start);
-  if (selected.length === 0) {
-    return selected;
-  }
-  if (selected.some((message) => message.role === "user") || start === 0) {
-    return selected;
-  }
-  for (let index = start - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === "user") {
-      return [message, ...selected];
-    }
-  }
-  return selected;
-}
-
 function extractExactRecallTokens(text: string): string[] {
   return Array.from(new Set(text.match(EXACT_RECALL_TOKEN_RE) ?? [])).slice(0, 4);
 }
@@ -938,52 +913,33 @@ export function buildContextEngineFactory(
             : undefined,
         );
         if (kernel) {
-          const ingestMessages = selectAfterTurnIngestMessages(
+          const result = await kernel.afterTurn({
+            sessionId: args.sessionId,
+            sessionKey: args.sessionKey,
+            userId,
             messages,
-            args.prePromptMessageCount,
-          );
-          let ingested = 0;
-          for (const message of ingestMessages) {
-            if (message.content.trim().length === 0) continue;
-            await kernel.ingestMessage({
-              sessionId: args.sessionId,
-              sessionKey: args.sessionKey,
-              userId,
-              message,
-              isHeartbeat: args.isHeartbeat,
-            });
-            ingested += 1;
-          }
+            prePromptMessageCount: args.prePromptMessageCount,
+            isHeartbeat: args.isHeartbeat,
+          });
           await performAfterTurnPredictiveCompaction({
             sessionId: args.sessionId,
             tokenBudget: args.tokenBudget,
             currentTokenCount,
           });
-          return { ok: true, ingested };
+          return result;
         }
         const rpc = await runtime.getRpc();
-        const ingestMessages = selectAfterTurnIngestMessages(
+        const result = await rpc.call("after_turn_kernel", {
+          ...args,
+          userId,
           messages,
-          args.prePromptMessageCount,
-        );
-        let ingested = 0;
-        for (const message of ingestMessages) {
-          if (message.content.trim().length === 0) continue;
-          await rpc.call("ingest_message_kernel", {
-            sessionId: args.sessionId,
-            sessionKey: args.sessionKey,
-            userId,
-            message,
-            isHeartbeat: args.isHeartbeat,
-          });
-          ingested += 1;
-        }
+        });
         await performAfterTurnPredictiveCompaction({
           sessionId: args.sessionId,
           tokenBudget: args.tokenBudget,
           currentTokenCount,
         });
-        return { ok: true, ingested };
+        return result;
       } catch (error) {
         logger.warn?.(
           `LibraVDB afterTurn failed sessionId=${args.sessionId}: ` +

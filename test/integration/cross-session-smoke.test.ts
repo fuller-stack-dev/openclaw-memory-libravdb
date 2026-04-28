@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { RpcClient } from "../../src/rpc.js";
 import { buildContextEngineFactory } from "../../src/context-engine.js";
@@ -11,11 +12,42 @@ import type { PluginConfig, SearchResult, SidecarSocket } from "../../src/types.
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
 
 // ---------------------------------------------------------------------------
+// Polling helper: daemon indexing is async, so retry searches until results
+// appear or the deadline expires.
+// ---------------------------------------------------------------------------
+async function pollForResults(
+  rpc: RpcClient,
+  collection: string,
+  text: string,
+  k: number,
+  maxAttempts = 10,
+  delayMs = 500,
+): Promise<SearchResult[]> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const result = await rpc.call<{ results: SearchResult[] }>("search_text", {
+      collection,
+      text,
+      k,
+    });
+    if (result.results.length > 0) return result.results;
+    if (i < maxAttempts - 1) await sleep(delayMs);
+  }
+  return [];
+}
+
+// ---------------------------------------------------------------------------
 // Connect a raw Node TCP/unix socket to the daemon endpoint and wrap it in
 // the SidecarSocket interface expected by RpcClient.
 // ---------------------------------------------------------------------------
 function connectToDaemon(endpoint: string): SidecarSocket {
   const isTcp = endpoint.startsWith("tcp:");
+  const isUnix = endpoint.startsWith("unix:");
+  if (!isTcp && !isUnix) {
+    throw new Error(
+      `Unsupported daemon endpoint "${endpoint}". ` +
+      `Expected "tcp:<host>:<port>" or "unix:<path>".`,
+    );
+  }
   const target = isTcp ? endpoint.slice(4) : endpoint.slice(5);
 
   const [host, portStr] = isTcp ? target.split(":") : [null, null];
@@ -100,15 +132,10 @@ test("cross-session durable memory smoke test", { skip: !process.env.CI && !proc
       ],
     });
 
-    // --- Verify Session A can search its own marker ---
-    const searchResultA = await rpc.call<{ results: SearchResult[] }>("search_text", {
-      collection: `user:${userId}`,
-      text: marker,
-      k: 5,
-    });
-    assert.ok(Array.isArray(searchResultA.results));
-    assert.ok(searchResultA.results.length > 0, "marker should be searchable after ingest in session A");
-    const foundA = searchResultA.results.some(
+    // --- Verify Session A can search its own marker (poll: indexing is async) ---
+    const resultsA = await pollForResults(rpc, `user:${userId}`, marker, 5);
+    assert.ok(resultsA.length > 0, "marker should be searchable after ingest in session A");
+    const foundA = resultsA.some(
       (r) => r.text.includes(marker) || r.text.includes("remember this"),
     );
     assert.ok(foundA, "marker content should appear in session A search results");
@@ -127,26 +154,13 @@ test("cross-session durable memory smoke test", { skip: !process.env.CI && !proc
       prompt: "recall anything about smoke markers",
     });
 
-    // The assemble response should include the system prompt addition with
-    // recalled memories, or the daemon should have them available.
-    const searchResultB = await rpc.call<{ results: SearchResult[] }>("search_text", {
-      collection: `user:${userId}`,
-      text: marker,
-      k: 5,
-    });
-
-    assert.ok(Array.isArray(searchResultB.results));
-    assert.ok(searchResultB.results.length > 0, "marker should be searchable from session B (cross-session recall)");
-    const foundB = searchResultB.results.some(
+    // Verify marker is still searchable from session B (cross-session recall)
+    const resultsB = await pollForResults(rpc, `user:${userId}`, marker, 5);
+    assert.ok(resultsB.length > 0, "marker should be searchable from session B (cross-session recall)");
+    const foundB = resultsB.some(
       (r) => r.text.includes(marker) || r.text.includes("remember this"),
     );
     assert.ok(foundB, "marker should be recallable across sessions under the same userId");
-
-    // Verify both sessions resolved to the same durable userId
-    assert.ok(
-      assembled.systemPromptAddition !== undefined || searchResultB.results.length > 0,
-      "cross-session durable recall should produce results under the same userId namespace",
-    );
   } finally {
     await rpc?.call("flush_namespace", { namespace: "smoke-test-user" }).catch(() => {});
     rpc = null;

@@ -13,6 +13,7 @@ import type { RpcClient } from "../../src/rpc.js";
 // ---------------------------------------------------------------------------
 class FakeRpc {
   public calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  public searchResults: SearchResult[] = [];
 
   async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
     this.calls.push({ method, params });
@@ -31,6 +32,8 @@ class FakeRpc {
           estimatedTokens: 0,
           systemPromptAddition: "",
         } as T;
+      case "search_text_collections":
+        return { results: this.searchResults } as T;
       default:
         throw new Error(`unexpected rpc method: ${method}`);
     }
@@ -99,7 +102,7 @@ test("context engine ingest resolves config userId and passes it to daemon", asy
   assert.equal(msg.content, "remember this");
 });
 
-test("context engine afterTurn resolves config userId and passes it to daemon", async () => {
+test("context engine afterTurn resolves config userId and ingests turn messages", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
   const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
@@ -110,13 +113,13 @@ test("context engine afterTurn resolves config userId and passes it to daemon", 
     messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
   });
 
-  const call = rpc.calls.find((c) => c.method === "after_turn_kernel");
-  assert.ok(call, "after_turn_kernel RPC was called");
+  const call = rpc.calls.find((c) => c.method === "ingest_message_kernel");
+  assert.ok(call, "ingest_message_kernel RPC was called");
   assert.equal(call.params.sessionId, "s1");
   assert.equal(call.params.sessionKey, "sk1");
   assert.equal(call.params.userId, "fixed-user");
-  const msgs = call.params.messages as Array<unknown>;
-  assert.equal(msgs.length, 2);
+  const msg = call.params.message as { content: string };
+  assert.equal(msg.content, "hello");
 });
 
 test("context engine assemble resolves config userId and passes it to daemon", async () => {
@@ -136,6 +139,46 @@ test("context engine assemble resolves config userId and passes it to daemon", a
   assert.equal(call.params.sessionId, "s1");
   assert.equal(call.params.sessionKey, "sk1");
   assert.equal(call.params.userId, "fixed-user");
+});
+
+test("context engine assemble injects exact factual recall for marker tokens", async () => {
+  const rpc = new FakeRpc();
+  const marker = "CROSS_SESSION_MEMORY_MARKER_1234567890";
+  rpc.searchResults = [
+    {
+      id: "question",
+      score: 1,
+      text: `What does ${marker} mean?`,
+      metadata: { collection: "user:fixed-user", role: "user" },
+    },
+    {
+      id: "fact",
+      score: 0.7,
+      text: `Remember this durable fact: ${marker} means Jay prefers the blue lobster path.`,
+      metadata: { collection: "user:fixed-user", role: "user" },
+    },
+  ];
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${marker} mean?`)],
+    prompt: `What does ${marker} mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.ok(
+    assembled.messages.some((message) =>
+      message.content.includes('source="exact_recalled"') &&
+      message.content.includes(`${marker} means Jay prefers the blue lobster path`),
+    ),
+    "exact marker fact should be injected even when a question scores higher",
+  );
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.ok(searchCall, "exact recall search RPC was called");
+  assert.equal(searchCall.params.text, marker);
 });
 
 // ---------------------------------------------------------------------------

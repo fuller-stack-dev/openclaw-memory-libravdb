@@ -37,6 +37,8 @@ type OpenClawCompatibleAssembleResult = {
 const APPROX_CHARS_PER_TOKEN = 4;
 const ASSEMBLE_BUDGET_HEADROOM_TOKENS = 256;
 const DEFAULT_COMPACTION_THRESHOLD_FRACTION = 0.8;
+const EXACT_RECALL_TOKEN_RE = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}_\d{6,}\b/g;
+const EXACT_RECALL_SEARCH_K = 32;
 
 type OpenClawCompatibleCompactResult = {
   ok: boolean;
@@ -360,6 +362,61 @@ export function normalizeKernelMessages(
   return messages.map((message) => normalizeKernelMessage(message));
 }
 
+function selectAfterTurnIngestMessages(
+  messages: KernelCompatibleMessage[],
+  prePromptMessageCount: number | undefined,
+): KernelCompatibleMessage[] {
+  const rawStart =
+    typeof prePromptMessageCount === "number" && Number.isFinite(prePromptMessageCount)
+      ? Math.floor(prePromptMessageCount)
+      : 0;
+  const start = Math.max(0, Math.min(messages.length, rawStart));
+  const selected = messages.slice(start);
+  if (selected.some((message) => message.role === "user") || start === 0) {
+    return selected;
+  }
+  for (let index = start - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "user") {
+      return [message, ...selected];
+    }
+  }
+  return selected;
+}
+
+function extractExactRecallTokens(text: string): string[] {
+  return Array.from(new Set(text.match(EXACT_RECALL_TOKEN_RE) ?? [])).slice(0, 4);
+}
+
+function isExactRecallFact(text: string, token: string): boolean {
+  return text.includes(token) && /\bmeans\b/i.test(text);
+}
+
+function rankExactRecallCandidate(result: SearchResult, token: string): number {
+  if (!result.text.includes(token)) return Number.NEGATIVE_INFINITY;
+  let rank = result.score;
+  if (/\bmeans\b/i.test(result.text)) rank += 100;
+  if (/\b(remember|durable|fact)\b/i.test(result.text)) rank += 10;
+  if (/\bwhat does\b/i.test(result.text) || result.text.includes("?")) rank -= 25;
+  return rank;
+}
+
+function extractExactRecallFactText(text: string, token: string): string {
+  const markerStart = text.indexOf(token);
+  if (markerStart < 0) return text.trim();
+  const tail = text.slice(markerStart).trim();
+  const factSentence = tail.match(/^[\s\S]*?\bmeans\b[\s\S]*?[.!?](?:\s|$)/i)?.[0]?.trim();
+  return factSentence ?? tail.split("\n")[0]?.trim() ?? tail;
+}
+
+function buildExactRecallMessage(result: SearchResult, token: string): OpenClawCompatibleMessage {
+  const factText = extractExactRecallFactText(result.text, token);
+  return {
+    role: "assistant",
+    content: `<memory_fact source="exact_recalled">${factText}</memory_fact>`,
+  };
+}
+
 export function normalizeAssembleResult(result: {
   messages?: Array<{ role: string; content?: unknown; id?: string }>;
   estimatedTokens?: number;
@@ -452,6 +509,61 @@ export function buildContextEngineFactory(
     recencyLambdaGlobal: cfg.recencyLambdaGlobal,
     ingestionGateThreshold: cfg.ingestionGateThreshold,
   });
+
+  async function augmentWithExactRecall(
+    assembled: OpenClawCompatibleAssembleResult,
+    args: {
+      queryText: string;
+      userId: string;
+      sessionId: string;
+    },
+  ): Promise<OpenClawCompatibleAssembleResult> {
+    if (cfg.crossSessionRecall === false) return assembled;
+    const tokens = extractExactRecallTokens(args.queryText);
+    if (tokens.length === 0) return assembled;
+
+    const existingContext = [
+      assembled.systemPromptAddition,
+      ...assembled.messages.map((message) => message.content),
+    ].join("\n");
+    const missingTokens = tokens.filter((token) => !isExactRecallFact(existingContext, token));
+    if (missingTokens.length === 0) return assembled;
+
+    const rpc = await runtime.getRpc();
+    const injected: OpenClawCompatibleMessage[] = [];
+    for (const token of missingTokens) {
+      try {
+        const result = await rpc.call<{ results: SearchResult[] }>("search_text_collections", {
+          collections: [`user:${args.userId}`, "global"],
+          text: token,
+          k: Math.max(EXACT_RECALL_SEARCH_K, cfg.topK ?? 0),
+          excludeByCollection: {},
+        });
+        const hit = (result.results ?? [])
+          .filter((candidate) => isExactRecallFact(candidate.text, token))
+          .sort((a, b) => rankExactRecallCandidate(b, token) - rankExactRecallCandidate(a, token))[0];
+        if (hit) {
+          injected.push(buildExactRecallMessage(hit, token));
+        }
+      } catch (error) {
+        logger.warn?.(
+          `LibraVDB exact recall failed sessionId=${args.sessionId} token=${token}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    if (injected.length === 0) return assembled;
+    logger.info?.(
+      `LibraVDB exact recall injected sessionId=${args.sessionId} ` +
+      `tokens=${injected.length}`,
+    );
+    return {
+      ...assembled,
+      messages: [...assembled.messages, ...injected],
+      estimatedTokens: assembled.estimatedTokens + approximateMessagesTokens(injected),
+    };
+  }
 
   function buildCompactSessionRequest(args: {
     sessionId: string;
@@ -690,17 +802,22 @@ export function buildContextEngineFactory(
       const kernel = runtime.getKernel();
       if (kernel) {
         try {
+          const assembled = normalizeAssembleResult(await kernel.assembleContext({
+            sessionId: args.sessionId,
+            sessionKey: args.sessionKey,
+            userId,
+            queryText: args.prompt ?? "",
+            visibleMessages: messages,
+            tokenBudget: args.tokenBudget,
+            config: buildAssemblyConfig(args.tokenBudget),
+            emitDebug: true,
+          }));
           return enforceTokenBudgetInvariant(
-            normalizeAssembleResult(await kernel.assembleContext({
-              sessionId: args.sessionId,
-              sessionKey: args.sessionKey,
+            await augmentWithExactRecall(assembled, {
+              queryText: args.prompt ?? messages[messages.length - 1]?.content ?? "",
               userId,
-              queryText: args.prompt ?? "",
-              visibleMessages: messages,
-              tokenBudget: args.tokenBudget,
-              config: buildAssemblyConfig(args.tokenBudget),
-              emitDebug: true
-            })),
+              sessionId: args.sessionId,
+            }),
             args.tokenBudget,
           );
         } catch (error) {
@@ -724,7 +841,15 @@ export function buildContextEngineFactory(
           emitDebug: true,
           config: buildAssemblyConfig(args.tokenBudget),
         });
-        return enforceTokenBudgetInvariant(normalizeAssembleResult(resp), args.tokenBudget);
+        const assembled = normalizeAssembleResult(resp);
+        return enforceTokenBudgetInvariant(
+          await augmentWithExactRecall(assembled, {
+            queryText: args.prompt ?? messages[messages.length - 1]?.content ?? "",
+            userId,
+            sessionId: args.sessionId,
+          }),
+          args.tokenBudget,
+        );
       } catch (error) {
         logger.warn?.(
           `LibraVDB assemble sidecar failed, using budget-clamped fallback context: ${error instanceof Error ? error.message : String(error)
@@ -770,33 +895,48 @@ export function buildContextEngineFactory(
             : undefined,
         );
         if (kernel) {
-          const result = await kernel.afterTurn({
-            sessionId: args.sessionId,
-            sessionKey: args.sessionKey,
-            userId,
+          const ingestMessages = selectAfterTurnIngestMessages(
             messages,
-            prePromptMessageCount: args.prePromptMessageCount,
-            isHeartbeat: args.isHeartbeat,
-          });
+            args.prePromptMessageCount,
+          );
+          for (const message of ingestMessages) {
+            if (message.content.trim().length === 0) continue;
+            await kernel.ingestMessage({
+              sessionId: args.sessionId,
+              sessionKey: args.sessionKey,
+              userId,
+              message,
+              isHeartbeat: args.isHeartbeat,
+            });
+          }
           await performAfterTurnPredictiveCompaction({
             sessionId: args.sessionId,
             tokenBudget: args.tokenBudget,
             currentTokenCount,
           });
-          return result;
+          return { ok: true, ingested: ingestMessages.length };
         }
         const rpc = await runtime.getRpc();
-        const result = await rpc.call("after_turn_kernel", {
-          ...args,
-          userId,
+        const ingestMessages = selectAfterTurnIngestMessages(
           messages,
-        });
+          args.prePromptMessageCount,
+        );
+        for (const message of ingestMessages) {
+          if (message.content.trim().length === 0) continue;
+          await rpc.call("ingest_message_kernel", {
+            sessionId: args.sessionId,
+            sessionKey: args.sessionKey,
+            userId,
+            message,
+            isHeartbeat: args.isHeartbeat,
+          });
+        }
         await performAfterTurnPredictiveCompaction({
           sessionId: args.sessionId,
           tokenBudget: args.tokenBudget,
           currentTokenCount,
         });
-        return result;
+        return { ok: true, ingested: ingestMessages.length };
       } catch (error) {
         logger.warn?.(
           `LibraVDB afterTurn failed sessionId=${args.sessionId}: ` +

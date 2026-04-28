@@ -13,6 +13,16 @@ import type { RpcClient } from "../../src/rpc.js";
 // ---------------------------------------------------------------------------
 class FakeRpc {
   public calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  public searchResults: SearchResult[] = [];
+  public assembleResponse: {
+    messages: Array<{ role: string; content?: unknown; id?: string }>;
+    estimatedTokens: number;
+    systemPromptAddition: string;
+  } = {
+    messages: [],
+    estimatedTokens: 0,
+    systemPromptAddition: "",
+  };
 
   async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
     this.calls.push({ method, params });
@@ -26,11 +36,9 @@ class FakeRpc {
       case "compact_session":
         return { ok: true, didCompact: false } as T;
       case "assemble_context_internal":
-        return {
-          messages: [],
-          estimatedTokens: 0,
-          systemPromptAddition: "",
-        } as T;
+        return this.assembleResponse as T;
+      case "search_text_collections":
+        return { results: this.searchResults } as T;
       default:
         throw new Error(`unexpected rpc method: ${method}`);
     }
@@ -99,7 +107,7 @@ test("context engine ingest resolves config userId and passes it to daemon", asy
   assert.equal(msg.content, "remember this");
 });
 
-test("context engine afterTurn resolves config userId and passes it to daemon", async () => {
+test("context engine afterTurn resolves config userId and passes messages to daemon", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
   const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
@@ -136,6 +144,243 @@ test("context engine assemble resolves config userId and passes it to daemon", a
   assert.equal(call.params.sessionId, "s1");
   assert.equal(call.params.sessionKey, "sk1");
   assert.equal(call.params.userId, "fixed-user");
+});
+
+test("context engine assemble injects exact factual recall for marker tokens", async () => {
+  const rpc = new FakeRpc();
+  const marker = "CROSS_SESSION_MEMORY_MARKER_1234567890";
+  rpc.searchResults = [
+    {
+      id: "question",
+      score: 1000,
+      text: `What does ${marker} mean?`,
+      metadata: { collection: "user:fixed-user", role: "user" },
+    },
+    {
+      id: "fact",
+      score: 0.7,
+      text: `Remember this durable fact: ${marker} means Jay prefers the <blue lobster> path & "safe" 'quoted'.`,
+      metadata: { collection: "user:fixed-user", role: "user" },
+    },
+  ];
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${marker} mean?`)],
+    prompt: `What does ${marker} mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.ok(
+    assembled.systemPromptAddition.includes("<exact_recalled_memory>"),
+    "exact marker fact should be injected into system context so models treat it as authoritative recall",
+  );
+  assert.ok(assembled.systemPromptAddition.includes('source="exact_recalled"'));
+  assert.ok(assembled.systemPromptAddition.includes("Use them to answer factual recall questions"));
+  assert.ok(assembled.systemPromptAddition.includes(`${marker} means Jay prefers the &lt;blue lobster&gt; path`));
+  assert.equal(assembled.systemPromptAddition.includes(`What does ${marker} mean?`), false);
+  assert.ok(assembled.systemPromptAddition.includes("&amp; &quot;safe&quot; &#39;quoted&#39;"));
+  assert.equal(assembled.systemPromptAddition.includes("<blue lobster>"), false);
+  assert.equal(
+    assembled.messages.some((message) => message.content.includes('source="exact_recalled"')),
+    false,
+  );
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.ok(searchCall, "exact recall search RPC was called");
+  assert.equal(searchCall.params.text, marker);
+});
+
+test("context engine exact recall checks existing facts per block", async () => {
+  const rpc = new FakeRpc();
+  const firstMarker = "FIRST_SESSION_MEMORY_MARKER_1234567890";
+  const secondMarker = "SECOND_SESSION_MEMORY_MARKER_1234567890";
+  rpc.assembleResponse = {
+    messages: [{ role: "assistant", content: `<entry>${secondMarker}</entry>` }],
+    estimatedTokens: 20,
+    systemPromptAddition: `${firstMarker} means Jay already has the first fact.`,
+  };
+  rpc.searchResults = [
+    {
+      id: "second-fact",
+      score: 0.9,
+      text: `${secondMarker} means Jay prefers the second path.`,
+      metadata: { collection: "user:fixed-user" },
+    },
+  ];
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" }, fakeRecallCache());
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What do ${firstMarker} and ${secondMarker} mean?`)],
+    prompt: `What do ${firstMarker} and ${secondMarker} mean?`,
+    tokenBudget: 4000,
+  });
+
+  const searches = rpc.calls.filter((c) => c.method === "search_text_collections");
+  assert.deepEqual(
+    searches.map((call) => call.params.text),
+    [secondMarker],
+  );
+  assert.ok(assembled.systemPromptAddition.includes(`${secondMarker} means Jay prefers the second path.`));
+});
+
+test("context engine exact recall skips additions that would exceed the token budget", async () => {
+  const rpc = new FakeRpc();
+  const marker = "BUDGET_SESSION_MEMORY_MARKER_1234567890";
+  rpc.assembleResponse = {
+    messages: [],
+    estimatedTokens: 43,
+    systemPromptAddition: "",
+  };
+  rpc.searchResults = [
+    {
+      id: "budget-fact",
+      score: 0.9,
+      text: `${marker} means Jay prefers a fact that is too large for the remaining budget.`,
+      metadata: { collection: "user:fixed-user" },
+    },
+  ];
+  const warnings: string[] = [];
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" }, fakeRecallCache(), {
+    error() {},
+    info() {},
+    warn(message: string) { warnings.push(message); },
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${marker} mean?`)],
+    prompt: `What does ${marker} mean?`,
+    tokenBudget: 300,
+  });
+
+  assert.equal(assembled.systemPromptAddition, "");
+  assert.equal(assembled.estimatedTokens, 43);
+  assert.match(warnings[0] ?? "", /addition exceeds token budget/);
+});
+
+test("context engine assemble keeps daemon result when exact recall RPC acquisition fails", async () => {
+  const rpc = new FakeRpc();
+  const marker = "CROSS_SESSION_MEMORY_MARKER_1234567891";
+  rpc.assembleResponse = {
+    messages: [{ role: "assistant", content: "base recalled context" }],
+    estimatedTokens: 24,
+    systemPromptAddition: "",
+  };
+  let getRpcCalls = 0;
+  const runtime: PluginRuntime = {
+    getRpc: async () => {
+      getRpcCalls += 1;
+      if (getRpcCalls === 1) return rpc as unknown as RpcClient;
+      throw new Error("socket unavailable");
+    },
+    getKernel: () => null,
+    emitLifecycleHint: async () => {},
+    shutdown: async () => {},
+  };
+  const warnings: string[] = [];
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" }, fakeRecallCache(), {
+    error() {},
+    info() {},
+    warn(message: string) { warnings.push(message); },
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${marker} mean?`)],
+    prompt: `What does ${marker} mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [{ role: "assistant", content: "base recalled context" }]);
+  assert.equal(getRpcCalls, 2);
+  assert.match(warnings[0] ?? "", /exact recall skipped/);
+});
+
+test("exact recall extracts quoted phrases from user queries", async () => {
+  const rpc = new FakeRpc();
+  const phrase = "blue lobster preference";
+  rpc.searchResults = [
+    {
+      id: "fact-1",
+      score: 0.9,
+      text: `Remember this: "${phrase}" means Jay always picks the blue one.`,
+      metadata: { collection: "user:fixed-user" },
+    },
+  ];
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does "${phrase}" mean?`)],
+    prompt: `What does "${phrase}" mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.ok(
+    assembled.systemPromptAddition.includes('source="exact_recalled"'),
+    "exact recall should fire for quoted phrases",
+  );
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.ok(searchCall);
+  assert.equal(searchCall.params.text, phrase);
+});
+
+test("exact recall extracts mixed-case identifiers with separators", async () => {
+  const rpc = new FakeRpc();
+  const key = "UserPref_blueLobster_v2";
+  rpc.searchResults = [
+    {
+      id: "fact-1",
+      score: 0.8,
+      text: `${key} means Jay prefers the blue lobster path.`,
+      metadata: { collection: "user:fixed-user" },
+    },
+  ];
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${key} mean?`)],
+    prompt: `What does ${key} mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.ok(
+    assembled.systemPromptAddition.includes('source="exact_recalled"'),
+    "exact recall should fire for mixed-case identifiers",
+  );
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.ok(searchCall);
+  assert.equal(searchCall.params.text, key);
+});
+
+test("exact recall skips common query words even when in quoted phrases", async () => {
+  const rpc = new FakeRpc();
+  const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+
+  // All tokens are common query words — no exact recall should fire
+  await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "what does this mean")],
+    prompt: "what does this mean",
+    tokenBudget: 4000,
+  });
+
+  const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
+  assert.equal(searchCall ?? null, null, "exact recall should not fire for common words");
 });
 
 // ---------------------------------------------------------------------------

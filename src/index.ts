@@ -13,36 +13,40 @@ import type { PluginConfig, SearchResult } from "./types.js";
 
 export const MEMORY_ID = "libravdb-memory";
 
+const LIGHTWEIGHT_MODES = new Set(["cli-metadata", "setup-only"]);
+
 export function register(api: OpenClawPluginApi) {
+  const mode = api.registrationMode as string;
   const logger = api.logger ?? console;
 
-  if (api.registrationMode === "cli-metadata") {
+  if (mode === "cli-metadata") {
     registerMemoryCliMetadata(api);
     return;
   }
 
-  const mode = api.registrationMode as string;
-  const isFullMode = mode === "full";
   const cfg = api.pluginConfig as PluginConfig;
+  const isLightweight = LIGHTWEIGHT_MODES.has(mode);
 
   logger.info?.(
-    `LibraVDB registering mode=${mode} full=${isFullMode} ` +
+    `LibraVDB registering mode=${mode} lightweight=${isLightweight} ` +
     `userId=${cfg.userId ?? "(auto)"} ` +
     `crossSessionRecall=${cfg.crossSessionRecall !== false}`,
   );
 
-  // OpenClaw lazy-loads plugin-owned CLI commands through discovery mode.
-  // Provide a runtime there so subcommands attach real handlers, but keep the
-  // long-lived memory/context-engine registrations gated to full mode only.
-  const runtimeOrNull = (isFullMode || mode === "discovery")
-    ? createPluginRuntime(cfg, api.logger ?? console)
-    : null;
-  registerMemoryCli(api, runtimeOrNull, cfg, api.logger ?? console);
+  // Create a runtime for every mode except the known lightweight ones.
+  // OpenClaw uses different mode strings for different entrypoints (agent CLI,
+  // gateway, channels, discovery, etc.) — only "cli-metadata" and "setup-only"
+  // are truly session-less.  Every other mode needs a runtime so the context
+  // engine can drive durable memory ingest/recall.
+  const runtimeOrNull = isLightweight
+    ? null
+    : createPluginRuntime(cfg, logger);
+  registerMemoryCli(api, runtimeOrNull, cfg, logger);
 
-  if (!isFullMode) {
+  if (isLightweight) {
     logger.warn?.(
-      `LibraVDB: registration mode is "${mode}", not "full". ` +
-      `Context engine hooks (ingest, afterTurn) are NOT registered. ` +
+      `LibraVDB: registration mode is "${mode}". ` +
+      `Context engine hooks (bootstrap, ingest, afterTurn) are NOT registered. ` +
       `Memory will not be written automatically — only CLI commands are available.`,
     );
     return;

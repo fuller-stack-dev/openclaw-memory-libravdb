@@ -210,13 +210,19 @@ test("context engine assemble injects exact factual recall for marker tokens", a
     tokenBudget: 4000,
   });
 
-  const exactMessage = assembled.messages.find((message) =>
-    message.content.includes('source="exact_recalled"'),
+  assert.ok(
+    assembled.systemPromptAddition.includes("<exact_recalled_memory>"),
+    "exact marker fact should be injected into system context so models treat it as authoritative recall",
   );
-  assert.ok(exactMessage, "exact marker fact should be injected even when a question scores higher");
-  assert.ok(exactMessage.content.includes(`${marker} means Jay prefers the &lt;blue lobster&gt; path`));
-  assert.ok(exactMessage.content.includes("&amp; &quot;safe&quot; &#39;quoted&#39;"));
-  assert.equal(exactMessage.content.includes("<blue lobster>"), false);
+  assert.ok(assembled.systemPromptAddition.includes('source="exact_recalled"'));
+  assert.ok(assembled.systemPromptAddition.includes("Use them to answer factual recall questions"));
+  assert.ok(assembled.systemPromptAddition.includes(`${marker} means Jay prefers the &lt;blue lobster&gt; path`));
+  assert.ok(assembled.systemPromptAddition.includes("&amp; &quot;safe&quot; &#39;quoted&#39;"));
+  assert.equal(assembled.systemPromptAddition.includes("<blue lobster>"), false);
+  assert.equal(
+    assembled.messages.some((message) => message.content.includes('source="exact_recalled"')),
+    false,
+  );
   const searchCall = rpc.calls.find((c) => c.method === "search_text_collections");
   assert.ok(searchCall, "exact recall search RPC was called");
   assert.equal(searchCall.params.text, marker);

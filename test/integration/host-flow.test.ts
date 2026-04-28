@@ -396,13 +396,17 @@ test("compact normalizes daemon compact response into SDK CompactResult", async 
   const result = await context.compact({
     sessionId: "test-session",
     tokenBudget: 2048,
+    currentTokenCount: 12345,
   });
 
+  const params = rpc.getLastCall("compact_session");
+  assert.ok(params, "Expected compact_session to be called");
+  assert.equal(params.currentTokenCount, 12345);
   assert.equal(result.ok, true);
   assert.equal(result.compacted, true);
   assert.equal(result.reason, undefined);
   assert.equal(result.result?.summary, "extractive");
-  assert.equal(result.result?.tokensBefore, 0);
+  assert.equal(result.result?.tokensBefore, 12345);
   assert.deepEqual(result.result?.details, {
     clustersFormed: 2,
     clustersDeclined: 1,

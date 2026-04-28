@@ -372,6 +372,9 @@ function selectAfterTurnIngestMessages(
       : 0;
   const start = Math.max(0, Math.min(messages.length, rawStart));
   const selected = messages.slice(start);
+  if (selected.length === 0) {
+    return selected;
+  }
   if (selected.some((message) => message.role === "user") || start === 0) {
     return selected;
   }
@@ -409,11 +412,20 @@ function extractExactRecallFactText(text: string, token: string): string {
   return factSentence ?? tail.split("\n")[0]?.trim() ?? tail;
 }
 
+function escapeMemoryFactText(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function buildExactRecallMessage(result: SearchResult, token: string): OpenClawCompatibleMessage {
   const factText = extractExactRecallFactText(result.text, token);
   return {
     role: "assistant",
-    content: `<memory_fact source="exact_recalled">${factText}</memory_fact>`,
+    content: `<memory_fact source="exact_recalled">${escapeMemoryFactText(factText)}</memory_fact>`,
   };
 }
 
@@ -529,7 +541,16 @@ export function buildContextEngineFactory(
     const missingTokens = tokens.filter((token) => !isExactRecallFact(existingContext, token));
     if (missingTokens.length === 0) return assembled;
 
-    const rpc = await runtime.getRpc();
+    let rpc: Awaited<ReturnType<typeof runtime.getRpc>>;
+    try {
+      rpc = await runtime.getRpc();
+    } catch (error) {
+      logger.warn?.(
+        `LibraVDB exact recall skipped sessionId=${args.sessionId}: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      );
+      return assembled;
+    }
     const injected: OpenClawCompatibleMessage[] = [];
     for (const token of missingTokens) {
       try {
@@ -899,6 +920,7 @@ export function buildContextEngineFactory(
             messages,
             args.prePromptMessageCount,
           );
+          let ingested = 0;
           for (const message of ingestMessages) {
             if (message.content.trim().length === 0) continue;
             await kernel.ingestMessage({
@@ -908,19 +930,21 @@ export function buildContextEngineFactory(
               message,
               isHeartbeat: args.isHeartbeat,
             });
+            ingested += 1;
           }
           await performAfterTurnPredictiveCompaction({
             sessionId: args.sessionId,
             tokenBudget: args.tokenBudget,
             currentTokenCount,
           });
-          return { ok: true, ingested: ingestMessages.length };
+          return { ok: true, ingested };
         }
         const rpc = await runtime.getRpc();
         const ingestMessages = selectAfterTurnIngestMessages(
           messages,
           args.prePromptMessageCount,
         );
+        let ingested = 0;
         for (const message of ingestMessages) {
           if (message.content.trim().length === 0) continue;
           await rpc.call("ingest_message_kernel", {
@@ -930,13 +954,14 @@ export function buildContextEngineFactory(
             message,
             isHeartbeat: args.isHeartbeat,
           });
+          ingested += 1;
         }
         await performAfterTurnPredictiveCompaction({
           sessionId: args.sessionId,
           tokenBudget: args.tokenBudget,
           currentTokenCount,
         });
-        return { ok: true, ingested: ingestMessages.length };
+        return { ok: true, ingested };
       } catch (error) {
         logger.warn?.(
           `LibraVDB afterTurn failed sessionId=${args.sessionId}: ` +

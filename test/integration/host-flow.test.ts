@@ -511,8 +511,8 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
   assert.equal(compactParams.currentTokenCount, 900);
   assert.equal(compactParams.targetSize, 799);
   assert.equal(logger.warns.length, 0);
-  assert.match(logger.infos[0] ?? "", /predictive compaction trigger phase=afterTurn/);
-  assert.match(logger.infos[1] ?? "", /predictive compaction completed phase=afterTurn/);
+  assert.ok(logger.infos.some((message) => /predictive compaction trigger phase=afterTurn/.test(message)));
+  assert.ok(logger.infos.some((message) => /predictive compaction completed phase=afterTurn/.test(message)));
 });
 
 test("afterTurn does not trigger predictive compaction without authoritative currentTokenCount", async () => {

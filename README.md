@@ -126,6 +126,10 @@ openclaw memory journal --limit 50
 openclaw memory dream-promote --user-id <userId> --dream-file /path/to/DREAMS.md
 ```
 
+`openclaw memory index --force` is kept as a compatibility command. LibraVDB
+maintains its own index state inside the sidecar, so the command exits without
+starting an explicit reindex pass.
+
 Use [Install](./docs/install.md) for daemon lifecycle commands and
 [Uninstall](./docs/uninstall.md) for safe shutdown and removal.
 

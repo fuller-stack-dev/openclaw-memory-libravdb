@@ -212,6 +212,61 @@ test("status command shuts the plugin runtime down after printing status", async
   assert.equal(shutdownCalls, 1);
 });
 
+test("index command is a compatibility no-op and shuts the plugin runtime down", async () => {
+  let registered: RegisteredCli | null = null;
+  let getRpcCalls = 0;
+  let shutdownCalls = 0;
+  const api = {
+    config: selectedConfig,
+    registerCli(builder: unknown, opts: RegisteredCli["opts"]) {
+      registered = { builder: builder as RegisteredCli["builder"], opts };
+    },
+  };
+
+  registerMemoryCli(
+    api as never,
+    {
+      async getRpc() {
+        getRpcCalls += 1;
+        throw new Error("index compatibility no-op should not start the runtime");
+      },
+      getKernel() {
+        return null;
+      },
+      async emitLifecycleHint() {},
+      async shutdown() {
+        shutdownCalls += 1;
+      },
+    },
+    {},
+  );
+
+  assert.ok(registered);
+  const cli = registered as RegisteredCli;
+  const program = new FakeCommand("openclaw");
+  cli.builder({ program });
+
+  const memory = program.commands.find((command) => command.name() === "memory");
+  assert.ok(memory);
+  const index = memory.commands.find((command) => command.name() === "index");
+  assert.ok(index?.handler);
+
+  const originalLog = console.log;
+  const printed: string[] = [];
+  console.log = ((message?: unknown) => {
+    printed.push(String(message ?? ""));
+  }) as typeof console.log;
+  try {
+    await index.handler?.({ agent: "main", force: true });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(getRpcCalls, 0);
+  assert.equal(shutdownCalls, 1);
+  assert.match(printed[0] ?? "", /compatibility no-op/i);
+});
+
 test("non-full CLI registration exposes command structure without action handlers", () => {
   let registered: RegisteredCli | null = null;
   const api = {

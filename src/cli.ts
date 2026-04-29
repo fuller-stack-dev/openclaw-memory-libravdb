@@ -91,7 +91,7 @@ export function registerMemoryCli(
         // Non-full modes register structure only so `openclaw memory --help` works.
         // No runtime available — do not attach action handlers.
         ensureCommand(root, "status").description("Show sidecar health, record counts, and active thresholds");
-        ensureCommand(root, "index").description("Refresh delegated LibraVDB memory index state");
+        ensureCommand(root, "index").description("Compatibility no-op for sidecar-managed LibraVDB indexing");
         ensureCommand(root, "search").description("Search LibraVDB memory");
         ensureCommand(root, "flush").description("Wipe a durable memory namespace after confirmation");
         ensureCommand(root, "export").description("Stream stored memories as newline-delimited JSON");
@@ -115,7 +115,7 @@ export function registerMemoryCli(
         });
 
       ensureCommand(root, "index")
-        .description("Refresh delegated LibraVDB memory index state")
+        .description("Compatibility no-op for sidecar-managed LibraVDB indexing")
         .option("--agent <id>", "Agent id")
         .option("--force", "Force refresh where supported")
         .option("--verbose", "Verbose logging")
@@ -291,44 +291,21 @@ async function runStatus(
 }
 
 async function runIndex(
-  runtime: PluginRuntime,
-  cfg: PluginConfig,
+  _runtime: PluginRuntime,
+  _cfg: PluginConfig,
   opts: CliOptionBag | undefined,
-  logger: LoggerLike,
+  _logger: LoggerLike,
   params: { quiet?: boolean } = {},
 ): Promise<void> {
-  try {
-    const bridge = buildMemoryRuntimeBridge(runtime.getRpc, cfg);
-    const { manager } = await bridge.getMemorySearchManager({
-      agentId: opts?.agent,
-      purpose: "status",
-    });
-    await manager.sync?.({
-      reason: "cli",
-      force: Boolean(opts?.force),
-    });
-    const status = manager.status();
-    if (status.ok === false) {
-      logger.error(`LibraVDB index refresh unavailable: ${status.message ?? "sidecar unavailable"}`);
-      process.exitCode = 1;
-      return;
-    }
-    if (opts?.verbose && !params.quiet) {
-      console.table({
-        Provider: status.provider ?? "libravdb",
-        Model: status.model ?? status.embeddingProfile ?? "unknown",
-        "Turns stored": status.turnCount ?? 0,
-        "Memories stored": status.memoryCount ?? 0,
-        Message: status.message ?? "ok",
-      });
-    }
-    if (!params.quiet) {
-      console.log("LibraVDB memory index refresh delegated to the sidecar.");
-    }
-  } catch (error) {
-    logger.error(`LibraVDB index refresh failed: ${formatError(error)}`);
-    process.exitCode = 1;
+  if (params.quiet) {
+    return;
   }
+  const scope = opts?.agent ? ` for agent ${opts.agent}` : "";
+  const forceNote = opts?.force ? " `--force` is accepted for compatibility." : "";
+  const verboseNote = opts?.verbose ? " Use `openclaw memory status` for live sidecar health and counts." : "";
+  console.log(
+    `LibraVDB memory index is a compatibility no-op${scope}; the sidecar maintains its own index state.${forceNote}${verboseNote}`,
+  );
 }
 
 async function runSearch(
